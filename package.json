@@ -1,0 +1,23 @@
+{
+  "name": "acquisition-os",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Social Funnel Lead-to-Booking OS — Internal-first, clonable deployment",
+  "workspaces": [
+    "apps/backend",
+    "apps/frontend"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "dev:backend": "npm run dev -w apps/backend",
+    "dev:frontend": "npm run dev -w apps/frontend",
+    "build": "npm run build --workspaces --if-present",
+    "db:generate": "npm run db:generate -w apps/backend",
+    "db:push": "npm run db:push -w apps/backend",
+    "db:migrate": "npm run db:migrate -w apps/backend"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED"
+}

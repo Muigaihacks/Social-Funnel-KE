@@ -1,0 +1,109 @@
+// Acquisition OS — Social Funnel (KE)
+// Clause 5.1 & Build Brief Part 3 — single source of truth for lead state
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --- Lead (core entity) ---
+model Lead {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Required / identity
+  phone String   // Required; used for deduplication
+  name  String?  // Normalized: full_name (FB) or firstName + lastName (LinkedIn)
+  email String?  // Used for deduplication
+
+  // Source & channel (Section 3A)
+  source  String?  // UTM or campaign identifier
+  channel String   // facebook | web | whatsapp | linkedin
+  sources String[] @default([]) // All sources ever (append on dedupe)
+
+  // Qualification (Brief Section 4)
+  leadType LeadType? @map("lead_type") // Real Estate | Construction
+  budget   String?
+  timeline String?
+
+  // AI scorer (Section 3C)
+  leadScore   Int?     @map("lead_score")   // 1–10
+  scoreReason String?  @map("score_reason")
+
+  // State
+  followUpCount   Int       @default(0) @map("follow_up_count")
+  pipelineStage   String    @default("new") @map("pipeline_stage") // new | warm | hot | audit_booked | client | dead | nurture
+  lastContactDate DateTime? @map("last_contact_date")
+
+  // Compliance (Kenya DPA 2019, WhatsApp opt-in)
+  whatsappOptIn Boolean @default(false) @map("whatsapp_opt_in")
+
+  // Tenant (clonable deployment)
+  tenantId String? @map("tenant_id")
+
+  @@index([phone])
+  @@index([email])
+  @@index([tenantId, phone])
+  @@index([pipelineStage])
+
+  // Relations
+  activityLogs    ActivityLog[]
+  messageLogs     MessageLog[]
+  followUpQueue   FollowUpQueue[]
+  stageTransitions StageTransition[]
+}
+
+enum LeadType {
+  REAL_ESTATE
+  CONSTRUCTION
+}
+
+// --- Stage transition timestamps (audit) ---
+model StageTransition {
+  id        String   @id @default(cuid())
+  leadId    String   @map("lead_id")
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  fromStage String?  @map("from_stage")
+  toStage   String   @map("to_stage")
+  at        DateTime @default(now())
+}
+
+// --- Message audit trail (every WhatsApp/Email sent) ---
+model MessageLog {
+  id        String   @id @default(cuid())
+  leadId    String   @map("lead_id")
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  channel   String   // whatsapp | email
+  direction String   @default("outbound") // outbound | inbound
+  body      String?  @db.Text
+  externalId String? @map("external_id") // provider message id
+  sentAt    DateTime @default(now()) @map("sent_at")
+}
+
+// --- Activity log (generic events for dashboard / n8n) ---
+model ActivityLog {
+  id        String   @id @default(cuid())
+  leadId    String   @map("lead_id")
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  action   String   // e.g. ingested | scored | follow_up_sent | booked | no_show
+  payload  Json?    // flexible metadata
+  createdAt DateTime @default(now()) @map("created_at")
+}
+
+// --- 7-Touch & nurture queue (Section 3D, 3C cold) ---
+model FollowUpQueue {
+  id         String   @id @default(cuid())
+  leadId     String   @map("lead_id")
+  lead       Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  touchIndex Int      @map("touch_index")   // 1–7 for 7-touch; or sequence index for nurture
+  channel    String   // whatsapp | email
+  scheduledFor DateTime @map("scheduled_for")
+  sentAt     DateTime? @map("sent_at")
+  status     String   @default("pending")   // pending | sent | skipped | aborted
+  createdAt  DateTime @default(now()) @map("created_at")
+}

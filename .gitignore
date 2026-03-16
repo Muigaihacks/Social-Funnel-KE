@@ -1,0 +1,41 @@
+# Dependencies
+node_modules
+.pnpm-store
+
+# Build
+dist
+.next
+out
+build
+*.tsbuildinfo
+
+# Env and secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# IDE
+.idea
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Prisma
+apps/backend/prisma/migrations/*_migration_lock.toml
+
+# n8n (self-hosted data)
+n8n/data
+
+# Testing
+coverage
+.nyc_output
