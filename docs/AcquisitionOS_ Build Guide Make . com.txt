@@ -1,0 +1,1298 @@
+﻿S O C I A L        F U N N E L
+Acquisition OS
+Complete Make.com Build Guide & Vertical Playbook
+
+
+  
+
+
+
+Internal Build · All Scenarios · Every API · Credit Optimisation · Vertical Playbook
+
+
+
+
+
+
+
+
+
+
+
+
+Part 0: Rationale — Why We Build This Ourselves First
+Before a single module is configured in Make.com, this needs to be said plainly:
+  
+
+
+
+Why Make.com (Not Zapier, Not n8n)
+Operations-based pricing means you pay per action, not per task. A 12- step automation costs the same 12 operations regardless of complexity. For a system with branching logic and multi-step sequences, this is significantly cheaper than Zapier.  
+Visual scenario builder maps directly to the flowcharts in this document. Every person on the team can read and modify a Make.com scenario without writing code.
+Native error handling, retry logic, and partial execution prevent data loss when external APIs fail — critical for a client-facing system.
+Task-based pricing means a 12-step Zap costs 12 tasks. At scale with multiple scenarios running, costs compound fast. More importantly,  
+Zapier's logic capabilities (filters, routers, iterators) are weaker for complex branching flows.
+n8n self-hosted is powerful but introduces infrastructure overhead (servers, uptime, SSL, maintenance). At this stage, Make.com's managed infrastructure removes operational risk. Revisit n8n when monthly Make.com costs exceed R8,000/month.  
+
+
+
+
+Why Airtable as CRM (Not HubSpot Free, Not Google Sheets)
+HubSpot Free is tempting but the API limits on the free tier make automation-heavy use painful. Paid HubSpot is expensive before you have clients. Google Sheets breaks at scale, has race conditions with concurrent writes, and has no relational data model.
+Airtable gives you a relational database with a clean API, native Make.com integration, visual views (Kanban pipeline, calendar, gallery), and a free tier that handles up to 1,200 records — sufficient for the first 6 months. When you outgrow it, migrating to HubSpot or a proper CRM is straightforward because your data model is already clean.
+
+
+Why GPT-4o-mini for AI (Not GPT-4o)
+  
+
+
+
+The Self-Eat-Your-Own-Cooking Principle
+Every scenario in this document has two versions:
+* The Social Funnel internal version: running on our own leads, our own pipeline
+* The client template version: the same scenario, parameterised for a construction firm client
+
+
+We build and run the internal version first. We fix the bugs on our own pipeline before our clients experience them. When we hand a client the template, it is battle-tested.
+  
+
+
+
+
+
+Part 1: System Architecture Overview
+The Seven Layers
+
+
+LAYER
+	TOOL
+	PURPOSE
+	MAKE.COM OPERATIONS/MONTH (EST.)
+	1. Capture
+	Webhooks + Facebook + LinkedIn
+	Receive leads from all sources into a single entry point
+	~200 (webhook receives only)
+	2. CRM
+	Airtable
+	Store, update, and query all contact and pipeline data
+	~3,000 (reads + writes across all scenarios)
+	3. Communication
+	WhatsApp (360dialog) + SendGrid
+	Send personalised messages at every touchpoint
+	~1,500 (one op per message sent)
+	4. AI
+	OpenAI GPT-4o- mini
+	Personalise messages, score leads, route intelligently
+	~500 (one API call per scored lead)
+	5. Booking
+	Calendly
+	Manage audit call scheduling and reminders
+	~400 (webhooks + confirmations)
+	6. Notifications
+	Slack
+	Alert team to hot leads, bookings, no- shows
+	~600 (internal pings)
+	7. Reporting
+	Google Sheets + Airtable
+	Weekly digest, pipeline health dashboard
+	~200 (scheduled reads)
+	  
+
+
+
+Master Lead Flow — All Sources to CRM  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[WhatsApp inbound]
+	─────┤
+	│
+	│
+	[Tally audit form]
+	─────┤
+	│
+	▼
+	[Phone call / walkup]
+	─────┘
+	│
+	[AI Lead Scorer]
+	
+
+	
+
+	│
+	│
+	
+
+	
+
+	│
+	┌─────────┴──────────┐
+	
+
+	
+
+	│
+	▼        ▼
+	
+
+	
+
+	│
+	[HOT: score 7-10]        [WARM: score 4-6]
+	
+
+	
+
+	│
+	│        │
+	
+
+	
+
+	│
+	▼        ▼
+	
+
+	
+
+	│
+	[Immediate WhatsApp] [Standard Sequence]
+	
+
+	
+
+	│
+	[+ Slack alert]
+	
+
+	
+
+	│
+	
+
+	
+
+	
+
+	[COLD: score
+	1-3]
+	
+
+
+
+  
+
+
+
+Full Scenario Map
+
+
+#
+	SCENARIO NAME
+	TRIGGER
+	KEY ACTIONS
+	SCENARIOS IT HANDS OFF TO
+	S1
+	Lead Capture Router
+	Webhook (all sources)
+	Deduplicate, create Airtable record, classify source
+	S2, S3
+	S2
+	60-Second First Response
+	S1 completion
+	AI-personalise message, send WhatsApp + email
+	S3, S4
+	S3
+	AI Lead Qualifier
+	S1 completion + response
+	Score lead 1-10, update CRM stage, route
+	S4 or S7
+	S4
+	7-Touch Follow-Up Engine
+	S3 completion (no booking yet)
+	Schedule 7 timed messages across 7 days
+	S5 when booking detected
+	S5
+	Booking Confirm + Reminders
+	Calendly webhook (booking made)
+	Confirm, send 24h + 1h reminders, update CRM
+	S6 if no-show
+	S6
+	No-Show Recovery
+	Calendly webhook (no-show)
+	Fire within 15 min, offer rebook, alert team
+	S4 restart
+	S7
+	Dormant Reactivation
+	Airtable scheduled (30/60/90d)
+	Re-engage cold or ghosted leads
+	S2 on re-engage
+	S8
+	Audit Booking Flow
+	Tally/Typeform submission
+	Confirm audit, prep brief, alert team
+	S5
+	S9
+	Internal Slack Alerts
+	Hot lead / booking / no-show
+	Notify team with lead context
+	—
+	S10
+	Weekly Pipeline Report
+	Scheduled (Sunday 18:00)
+	Pull Airtable data, format, send digest
+	—
+	S11
+	Social DM Lead Tracker
+	Manual entry trigger
+	Log comment/DM leads from content
+	S2
+	S12
+	Paid Ad Lead Capture
+	Facebook/LinkedIn webhook
+	Capture form data, route same as S1
+	S2, S3
+	
+
+  
+
+
+
+
+
+
+
+Part 2: Setup — Every Account, API, and Connection
+Step 1: Create Your Accounts (Do This in Order)
+
+
+   1. Make.com
+      1. Go to make.com and create an account under your Social Funnel business email.
+      2. Start on the Free plan. Upgrade to Core (R450/month) when you hit 1,000 ops.
+      3. Create an Organisation called 'Social Funnel'. Under it, create two Teams: 'Internal' and 'Client Templates'.
+      4. All scenarios built for Social Funnel's own use go under Internal. All client-facing templates go under Client Templates.
+
+
+
+
+   2. Airtable (CRM Foundation)
+5. Create account at airtable.com with your business email.
+6. Create a new Base called 'Acquisition OS — Social Funnel'.
+7. Create the following tables (covered in full in Part 3):
+   * Contacts (all leads and clients)
+   * Pipeline Stages
+   * Message Log (every message sent)
+   * Audit Bookings
+   * Follow-Up Queue
+   * Reactivation Queue
+8. Generate your Airtable API key: Account > Developer Hub > Personal Access Tokens > Create Token. Permissions needed: data.records:read, data.records:write, schema.bases:read.
+
+
+
+
+   3. OpenAI
+9. Create account at platform.openai.com.
+10. Add a payment method. Set a monthly spend limit of R300 to prevent runaway costs.
+11. Generate an API key: API Keys > Create new secret key. Name it 'Make-AcquisitionOS'.
+12. Note your Organisation ID from Settings — needed for some API calls.  
+
+
+   4. WhatsApp Business API — 360dialog
+   13. Go to 360dialog.com and create a business account.
+   14. You will need a dedicated phone number for Social Funnel (not your personal number). A local South African number works. Get a SIM for this purpose.
+   15. Complete the WhatsApp Business Account verification (requires Facebook Business Manager account — covered below).
+   16. Once approved, generate your 360dialog API key from the dashboard.
+   17. Note your WABA ID (WhatsApp Business Account ID) — needed in every API call.  
+      1. Facebook Business Manager
+      18. Go to business.facebook.com and create a Business Manager account for Social Funnel.
+      19. Add your Facebook Page (create one if you do not have one).
+      20. Verify your business (required for WhatsApp API and Lead Ads webhooks).
+      21. Under Business Settings > Integrations > Lead Access, connect your Page.
+      22. Generate a System User Access Token: Business Settings > System Users > Add > Generate Token. Permissions: pages_read_engagement, leads_retrieval, ads_management.
+      23. Store this token securely — it does not expire and grants broad access.
+
+
+
+
+      2. Calendly
+      24. Create account at calendly.com with your business email.
+      25. Create an Event Type: 'Revenue Leak Audit — 15 min'. Set availability to your actual available slots.
+      26. Under Integrations > Webhooks, note the webhook subscription endpoint — you will configure this in Make.com.
+      27. Generate a Calendly API key: Integrations > API & Webhooks > Generate New Token.
+
+
+
+
+      3. SendGrid (Email)
+      28. Create account at sendgrid.com.
+      29. Verify your sending domain (add DNS records to your domain — one-time setup, ~15 minutes).
+      30. Create an API key: Settings > API Keys > Create API Key. Permission: Full Access.
+      31. Create email templates for: First Response, Follow-Up Touch 1-7, Booking Confirmation, Reminder, No-Show Recovery, Dormant Reactivation. These are used in scenarios S2, S4, S5, S6, S7.
+
+
+
+
+      4. Slack
+      32. Create a Slack workspace for Social Funnel (or use existing).
+      33. Create channels: #hot-leads, #bookings, #no-shows, #pipeline-report, #system-errors.
+      34. Create a Slack App: api.slack.com/apps > Create New App > From Scratch.
+      35. Add the Bot Token Scopes: chat:write, chat:write.public, incoming-webhook.
+      36. Install app to workspace and note the Bot User OAuth Token (starts with xoxb-).
+
+
+
+
+      5. LinkedIn (Lead Gen Forms — Optional Phase 2)
+      37. LinkedIn does not have a native webhook. Use one of these two approaches:
+      * Option A: Zapier bridge — Use Zapier's free LinkedIn trigger and send data to your Make.com webhook. Costs 1 Zapier task per lead.
+      * Option B: Make.com LinkedIn native module — Available on Make.com Core plan. Polls for new leads every 15 minutes (not real-time but sufficient).
+      38. Generate LinkedIn API credentials: LinkedIn Developer Portal > Create App. Permissions: r_ads_leadgen, r_organization_social.
+
+
+
+
+API Reference Table
+
+
+SERVICE
+	BASE URL
+	AUTH METHOD
+	KEY ENDPOINTS USED
+	Airtable
+	https://api.airtable.com/v0
+	Bearer token
+	GET /baseId/tableId, POST
+/baseId/tableId, PATCH
+/baseId/tableId/recordId
+	OpenAI
+	https://api.openai.com/v1
+	Bearer token
+	POST /chat/completions
+	360dialog
+	https://waba.360dialog.io/v1
+	Bearer token (D360-API- KEY header)
+	POST /messages, GET
+/contacts/{phone}
+	SendGrid
+	https://api.sendgrid.com/v3
+	Bearer token
+	POST /mail/send
+	Calendly
+	https://api.calendly.com
+	Bearer token
+	GET /scheduled_events, POST
+/webhook_subscriptions
+	Facebook Graph
+	https://graph.facebook.com/v18.0
+	Access token (query param)
+	GET /form/leads, POST
+/page/subscribed_apps
+	Slack
+	https://slack.com/api
+	Bearer token
+	POST /chat.postMessage
+	
+
+  
+
+
+
+
+
+Part 3: The Airtable Data Model
+Your CRM is the nervous system. Every scenario reads from it or writes to it. Get this right before building a single scenario.
+
+
+
+
+Table 1: Contacts
+
+
+FIELD NAME
+	TYPE
+	PURPOSE / NOTES
+	Contact ID
+	Autonumber
+	Primary key — auto-generated
+	Full Name
+	Single line text
+	Lead's full name
+	Phone
+	Phone
+	WhatsApp number. Format: +254XXXXXXXXX
+	Email
+	Email
+	For email sequences
+	Company Name
+	Single line text
+	Their firm name — used in personalisation
+	Lead Source
+	Single select
+	Options: LinkedIn, Facebook Ad, Website, WhatsApp, Referral, Cold DM, Walk-in, Other
+	Pipeline Stage
+	Single select
+	New Lead, Contacted, Audit Booked, Audit Done, Proposal Sent, Client, Churned, Dead
+	Lead Score
+	Number
+	1-10. Set by AI in S3. Updated on each re-engagement.
+	Score Reason
+	Long text
+	AI explanation for the score — shown in Slack alert
+	First Contact Date
+	Date
+	Timestamp of first entry into system
+	Last Contact Date
+	Date
+	Timestamp of last message sent — used for dormant detection
+	Follow-Up Count
+	Number
+	Incremented each time a follow-up fires. Stops at 7.
+	Next Follow-Up Date
+	Date
+	Scheduled date for next touch — set by S4
+	Booking ID
+	Single line text
+	Calendly event UUID — populated when audit booked
+	Audit Status
+	Single select
+	Not Booked, Booked, Attended, No-Show
+	
+
+
+
+FIELD NAME
+	TYPE
+	PURPOSE / NOTES
+	Source Content Piece
+	Single line text
+	Which post/video they came from — for attribution
+	WhatsApp Opt-In
+	Checkbox
+	POPIA/GDPR compliance — must be true to send WA messages
+	Notes
+	Long text
+	Manual notes from team
+	Tags
+	Multiple select
+	Hot, Warm, Cold, Dormant, VIP, Reactivation
+	Reactivation Attempt
+	Number
+	0, 1, 2, or 3 — stops reactivation after 3 attempts
+	
+
+Table 2: Message Log
+
+
+FIELD NAME
+	TYPE
+	PURPOSE
+	Log ID
+	Autonumber
+	Primary key
+	Contact (Link)
+	Link to Contacts
+	Foreign key
+	Sent At
+	Date/Time
+	Exact timestamp
+	Channel
+	Single select
+	WhatsApp, Email, SMS
+	Message Type
+	Single select
+	First Response, Follow-Up 1-7, Booking Confirm, Reminder, No-Show, Reactivation
+	Message Body
+	Long text
+	Full message text — for audit trail
+	Delivery Status
+	Single select
+	Sent, Delivered, Read, Failed
+	Scenario ID
+	Single line text
+	Which Make.com scenario sent this — for debugging
+	
+
+Table 3: Follow-Up Queue
+
+
+FIELD NAME
+	TYPE
+	PURPOSE
+	Queue ID
+	Autonumber
+	Primary key
+	Contact (Link)
+	Link to Contacts
+	Foreign key
+	Touch Number
+	Number
+	1 through 7
+	Scheduled At
+	Date/Time
+	When this touch should fire
+	Status
+	Single select
+	Pending, Sent, Skipped (if booked before this fires)
+	Message Template
+	Single select
+	Which template to use for this touch
+	
+
+Airtable Views to Create
+      * Pipeline Kanban — Group by Pipeline Stage. Shows all active leads at a glance.
+      * Hot Leads Today — Filter: Lead Score >= 7 AND Pipeline Stage != Client. Sort by First Contact Date.
+      * Follow-Up Due Today — Filter: Follow-Up Queue Status = Pending AND Scheduled At = Today.
+      * Dormant Leads — Filter: Last Contact Date is before 30 days ago AND Pipeline Stage != Client AND Pipeline Stage != Dead.
+      * No-Show Recovery — Filter: Audit Status = No-Show AND Last Contact Date is before 1 hour ago.
+      * Weekly Report View — Filter: First Contact Date is within last 7 days. Shows new leads for digest.
+
+
+
+
+
+
+  
+
+
+
+
+
+Part 4: Building Every Make.com Scenario
+Each scenario is described with: the trigger, every module in order, the exact configuration of each module, and credit optimisation notes.
+
+
+S1: Lead Capture Router
+  
+
+
+
+Module-by-Module Build
+      39. MODULE 1 — Custom Webhook: Add > Webhooks > Custom Webhook. Copy the URL. This is your universal lead intake endpoint. Give it to every source (Facebook, Tally form, website form). Name it: 'AcqOS-Lead-Intake'.
+      40. MODULE 2 — Set Variable: Extract and normalise fields from the webhook payload. Map: Name
+= {{1.name || 1.full_name || 1.Name}}, Phone = {{1.phone || 1.telephone}}, Email = {{1.email}}, Source = {{1.source}}, Company = {{1.company || 1.firm_name}}.
+      41. MODULE 3 — Airtable: Search Records. Table: Contacts. Filter: Phone = {{2.Phone}} OR Email =
+{{2.Email}}. This checks for duplicates. Operations: 1.
+      42. MODULE 4 — Router (Condition): Branch A = Record exists (update). Branch B = Record does not exist (create).
+      43. MODULE 4A — Airtable: Update Record (if duplicate). Fields to update: Last Contact Date = now(), Lead Source = append new source if different.
+      44. MODULE 4B — Airtable: Create Record (if new). Map all fields. Set Pipeline Stage = 'New Lead'. Set First Contact Date = now(). Set WhatsApp Opt-In = true (form submission implies consent — include opt-in language on all forms).
+      45. MODULE 5 — Set Variable: Store the Airtable Record ID from whichever branch ran. This is passed to S2 and S3.
+      46. MODULE 6 — HTTP Module: POST to S2's webhook URL with Record ID, Name, Phone, Email, Company, Source. This triggers S2 immediately.
+  
+
+
+
+  
+
+
+
+S2: 60-Second First Response
+  
+
+
+
+Module-by-Module Build
+      47. MODULE 1 — Custom Webhook: Receives payload from S1 (Record ID, Name, Phone, Email, Company, Source).
+      48. MODULE 2 — OpenAI: Create Completion. Model: gpt-4o-mini. Max tokens: 250. Temperature: 0.7.
+System prompt: 'You write short, warm, professional WhatsApp messages for Social Funnel, a RevOps company. The message is the FIRST contact with a potential client. It should feel human, not robotic.
+Maximum 3 sentences. Do not use emojis. Do not mention pricing. End with one specific question about their business.'
+User prompt: 'Write a first response message for: Name: [1.Name], Company: [1.Company], They came from: [1.Source]. Reference their source naturally if it is a specific content piece or ad.'
+      49. MODULE 3 — 360dialog: Send WhatsApp Message. To: {{1.Phone}}. Message:
+{{2.choices[0].message.content}}. This fires within seconds of S1 completing.
+      50. MODULE 4 — SendGrid: Send Email. To: {{1.Email}}. From: team@socialfunnel.co.za. Subject: 'Quick question, {{1.Name}}'. Body: Same AI-generated content with email formatting.
+      51. MODULE 5 — Airtable: Update Record. Record ID: {{1.RecordID}}. Fields: Last Contact Date = now(), Pipeline Stage = 'Contacted', Follow-Up Count = 0.
+      52. MODULE 6 — Airtable: Create Message Log entry. Contact = {{1.RecordID}}, Channel = WhatsApp, Type = First Response, Body = {{2.choices[0].message.content}}, Sent At = now().
+  
+
+
+
+S3: AI Lead Qualifier
+  
+
+
+
+Lead Scoring Criteria (fed to AI as context)
+SIGNAL
+	WEIGHT
+	HOW TO DETECT
+	Came from paid ad
+	High (adds 2-3 pts)
+	Source field = Facebook Ad or LinkedIn Ad
+	Provided company name
+	Medium (adds 1-2 pts)
+	Company field is not empty
+	Enquired about specific service
+	High (adds 2 pts)
+	Message body mentions 'system', 'CRM', 'leads', 'response'
+	Business email domain
+	Medium (adds 1 pt)
+	Email is not Gmail/Yahoo/Hotmail
+	Response to content piece
+	High (adds 2 pts)
+	Source field references a specific post/video
+	WhatsApp initiated by lead
+	Very High (adds 2 pts)
+	Source = WhatsApp inbound (they messaged us first)
+	
+
+
+
+SIGNAL
+	WEIGHT
+	HOW TO DETECT
+	No company name, no message
+	Low (subtracts 2 pts)
+	Likely form spam or very early-stage curiosity
+	
+
+      53. MODULE 1 — Custom Webhook: Receives payload from S1.
+      54. MODULE 2 — OpenAI: Create Completion. Model: gpt-4o-mini. Max tokens: 80. Temperature: 0.2.
+System prompt: 'You are a lead scoring assistant. Score leads from 1 (lowest intent) to 10 (highest intent). Respond ONLY with JSON: {"score": number, "reason": string}. Reason must be under 20 words.'
+User prompt: 'Score this lead: Name: [1.Name], Company: [1.Company], Email: [1.Email], Source: [1.Source], Message: [1.Message]. Scoring criteria: business email domain +1, company name provided
++1, came from paid ad +2, mentioned leads/CRM/system +2, WhatsApp initiated by lead +2, no company or message -2.'
+      55. MODULE 3 — JSON Parse: Parse {{2.choices[0].message.content}} to extract score and reason.
+      56. MODULE 4 — Airtable: Update Record. Record ID: {{1.RecordID}}. Fields: Lead Score =
+{{3.score}}, Score Reason = {{3.reason}}.
+      57. MODULE 5 — Router: Branch on score.
+Branch A: Score 7-10 (HOT) — trigger S9 Slack alert immediately with VIP tag. Branch B: Score 4-6 (WARM) — trigger S4 standard follow-up sequence.
+Branch C: Score 1-3 (COLD) — add to Airtable Tags as 'Cold', set Next Follow-Up Date = 7 days from now, add to S7 dormant queue.
+      58. MODULE 6 — Airtable: Update Record. Tags = {{score-based tag}}. Pipeline Stage updated per branch.
+      59. MODULE 7 — HTTP: Trigger appropriate downstream scenario (S4, S7, or S9) based on branch.
+
+
+S4: 7-Touch Follow-Up Engine
+  
+
+The 7-Touch Sequence
+TOUCH
+	TIMING
+	CHANNEL
+	PURPOSE
+	MESSAGE ANGLE
+	1
+	Day 1, 4 hours after S2
+	WhatsApp
+	Soft follow-up, add value
+	Share the pipeline ratio calculation
+	2
+	Day 2, 10:00am
+	Email
+	Educate, no pitch
+	Link to best problem content piece
+	3
+	Day 3, 2:00pm
+	WhatsApp
+	Social proof
+	One-line audit result from a similar firm
+	4
+	Day 4, 10:00am
+	Email
+	Offer value
+	'Free 15-min audit — here's the link'
+	5
+	Day 5, 11:00am
+	WhatsApp
+	Urgency + simplicity
+	'Just 2 spots left this week for audit'
+	6
+	Day 6, 3:00pm
+	Email
+	Last value piece
+	Share the before/after KPI comparison
+	7
+	Day 7, 10:00am
+	WhatsApp
+	Farewell touch
+	'Won't keep messaging. Here when timing is right.'
+	
+
+Module Build for Each Touch
+      60. MODULE 1 — Custom Webhook OR Scheduled trigger: Receives Record ID and Touch Number.
+      61. MODULE 2 — Airtable: Get Record. Retrieve current Pipeline Stage, Audit Status, Follow-Up Count.
+      62. MODULE 3 — Filter (STOP condition): If Audit Status = Booked OR Pipeline Stage = Client OR Pipeline Stage = Dead → STOP. Do not send. Log as Skipped.
+      63. MODULE 4 — OpenAI: Generate message for this specific touch. Pass touch number, name, company, and the specific angle for this touch (see table above). Max tokens: 200.
+      64. MODULE 5 — Route by Channel: WhatsApp (360dialog) for touches 1, 3, 5, 7. Email (SendGrid)
+for touches 2, 4, 6.
+      65. MODULE 6 — Airtable: Update Record. Follow-Up Count = Follow-Up Count + 1. Last Contact Date = now().
+      66. MODULE 7 — Airtable: Update Follow-Up Queue. Mark this touch Status = Sent.
+      67. MODULE 8 — Schedule next touch: If Touch Number < 7, create next queue entry with appropriate date/time. Use Make.com's built-in scheduler or Airtable date field watched by a scheduled scenario.
+  
+
+S5: Booking Confirmation + Reminder Sequence
+  
+
+
+
+      68. MODULE 1 — Calendly Webhook: Configure in Make.com. Event: invitee.created. Extract: invitee name, email, phone (from custom questions), event start time, event UUID.
+      69. MODULE 2 — Airtable: Search Contacts by email. Get Record ID.
+      70. MODULE 3 — Airtable: Update Record. Audit Status = Booked. Booking ID = {{event_uuid}}. Pipeline Stage = Audit Booked.
+      71. MODULE 4 — Airtable: Update Follow-Up Queue. Find all Pending entries for this contact. Set Status = Skipped. This STOPS the S4 sequence.
+      72. MODULE 5 — 360dialog: Send WhatsApp confirmation. 'Confirmed for [date] at [time]. You will receive a reminder 1 hour before. If anything changes, reply here.'
+      73. MODULE 6 — SendGrid: Send email confirmation with Calendly reschedule link.
+      74. MODULE 7 — Make.com Sleep/Scheduler: Set trigger for 24 hours before event start time.
+      75. MODULE 8 — 360dialog: Send 24h reminder WhatsApp message. Include one value-add: 'To make the most of our 15 minutes, note down your monthly enquiry volume and average project value. See you tomorrow.'
+      76. MODULE 9 — Make.com Sleep/Scheduler: Set trigger for 1 hour before event start time.
+      77. MODULE 10 — 360dialog: Send 1h reminder. Short and direct: 'Our audit call is in 1 hour. Joining link: [Zoom/Google Meet link]. See you soon.'
+      78. MODULE 11 — S9 trigger: Notify Slack #bookings channel with lead context.
+
+
+
+
+S6: No-Show Recovery
+  
+
+
+
+      79. MODULE 1 — Calendly Webhook: Event 'invitee.canceled'. Alternatively: scheduled scenario runs 20 minutes after every event to check if attended.
+      80. MODULE 2 — Airtable: Update Record. Audit Status = No-Show.
+      81. MODULE 3 — 360dialog: Send WhatsApp recovery message immediately.  
+
+
+  
+
+         82. MODULE 4 — Airtable: Create entry in Follow-Up Queue. Touch 1 of a fresh 3-touch recovery sequence (shorter than the main 7-touch — respects that they already showed high intent by booking once).
+         83. MODULE 5 — S9 trigger: Alert Slack #no-shows with lead name, company, score, and recovery message sent status.
+
+
+
+
+S7: Dormant Lead Reactivation
+  
+
+
+
+         84. MODULE 1 — Airtable: Search Records. Filter: Last Contact Date < 30 days ago AND Pipeline Stage is NOT Client AND Pipeline Stage is NOT Dead AND Reactivation Attempt < 3.
+         85. MODULE 2 — Iterator: Loop through each dormant record.
+         86. MODULE 3 — Router: Branch on days since last contact.
+Branch A (30 days): Reactivation Attempt = 0 → send 'check-in' message Branch B (60 days): Reactivation Attempt = 1 → send new content/proof piece Branch C (90 days): Reactivation Attempt = 2 → final 'last message' farewell
+         87. MODULE 4 — OpenAI: Generate reactivation message contextualised to how long it has been and the lead's original source.
+         88. MODULE 5 — 360dialog: Send WhatsApp message.
+         89. MODULE 6 — Airtable: Update Record. Reactivation Attempt = Reactivation Attempt + 1. Last Contact Date = now(). If Reactivation Attempt = 3, set Pipeline Stage = Dead.
+
+
+REACTIVATION TOUCH
+	TIMING
+	MESSAGE ANGLE
+	EXPECTED RESPONSE RATE
+	Touch 1 (30d)
+	Day 30
+	'Checking in — have you had a chance to look at the audit framework?'
+	15-25%
+	Touch 2 (60d)
+	Day 60
+	Share a new proof piece or case study. 'Thought of you when I posted this.'
+	10-15%
+	Touch 3 (90d)
+	Day 90
+	'This is our last message. When timing is right, you know where we are.'
+	5-10%
+	
+
+S8: Revenue Leak Audit Booking Flow
+  
+
+
+
+         90. MODULE 1 — Tally Webhook: Configure Tally form with fields: Name, Company, Phone, Email, Monthly Enquiry Volume, Average Project Value, Biggest Challenge.
+         91. MODULE 2 — Airtable: Search existing contact. Create if new. Update if existing (upgrade stage to Audit Requested).
+         92. MODULE 3 — OpenAI: Generate personalised 'we've reviewed your form' message that references their specific answers. Max tokens: 200.
+         93. MODULE 4 — 360dialog: Send WhatsApp message with Calendly booking link embedded.
+         94. MODULE 5 — SendGrid: Send email with the same message + Calendly link.
+         95. MODULE 6 — OpenAI: Generate a brief for the Social Funnel team — summarise the lead's form answers into a 100-word prep note. Model: gpt-4o-mini. Max tokens: 150.
+         96. MODULE 7 — Slack: Post to #hot-leads with the team brief, lead score, form answers, and Calendly link.
+         97. MODULE 8 — Airtable: Update Record. Pipeline Stage = Audit Requested. Tags = Hot.
+
+
+
+
+S9: Internal Slack Notifications
+  
+
+
+
+ALERT TYPE
+	CHANNEL
+	TRIGGERED BY
+	MESSAGE INCLUDES
+	New Hot Lead
+	#hot-leads
+	S3 (score 7-10)
+	Name, company, score, score reason, source, phone, first message sent
+	Audit Booked
+	#bookings
+	S5
+	Name, company, booking time, lead score, follow-up history
+	No-Show
+	#no-shows
+	S6
+	Name, company, original booking time, recovery message status, lead score
+	Audit Completed
+	#bookings
+	Manual trigger or Calendly
+	Name, company, stage updated to Audit Done
+	New Client Signed
+	#pipeline-report
+	Manual trigger
+	Celebration message with client name and tier
+	System Error
+	#system-errors
+	Any scenario error handler
+	Scenario name, error message, Record ID affected
+	
+
+Every Slack message uses Block Kit formatting for readability. Here is the structure for a Hot Lead alert:
+
+
+  
+
+
+
+S10: Weekly Pipeline Report
+  
+
+
+
+         98. MODULE 1 — Airtable: Count records where First Contact Date is in last 7 days. = New Leads This Week.
+         99. MODULE 2 — Airtable: Count records where Pipeline Stage = Audit Booked AND Booking Date is in last 7 days. = Audits Booked This Week.
+         100. MODULE 3 — Airtable: Count records where Pipeline Stage = Client AND updated this week. = New Clients This Week.
+         101. MODULE 4 — Airtable: Calculate average Lead Score for all leads this week.
+         102. MODULE 5 — Airtable: Count records where Follow-Up Count = 7 (completed sequences). = Sequences Completed.
+         103. MODULE 6 — OpenAI: Generate 3-sentence commentary on the week's numbers. 'Performance was above/below baseline because...' Max tokens: 100.
+         104. MODULE 7 — Slack: Post to #pipeline-report with formatted table and AI commentary.
+         105. MODULE 8 — Google Sheets: Append row with date and all metrics for historical trending.
+
+
+
+
+S11: Social DM Lead Tracker
+
+
+  
+
+
+
+Build a Tally.so micro-form (internal, not public) with fields: Name, Phone, Email, Company, Source, Message. Share the link in Slack as a pinned message. When a DM lead comes in, team member fills form in 30 seconds. Form submission triggers this scenario identically to S1.
+
+
+
+
+S12: Paid Ad Lead Capture
+  
+
+
+
+MODULE 1: Receive webhook from Facebook or LinkedIn. MODULE 2: Normalise field names (Facebook uses 'full_name', LinkedIn uses 'firstName'+'lastName'). MODULE 3: Construct payload identical to S1's expected format. MODULE 4: POST to S1 webhook URL. From this point, identical to any other lead.
+  
+
+
+
+  
+
+
+
+
+
+Part 5: Credit Optimisation — Building a Lean System
+Make.com charges per operation (each module execution = 1 operation). A poorly built scenario can use 20+ ops for something achievable in 5. These principles keep your system lean.
+
+
+The 10 Rules of Make.com Credit Efficiency
+         106. BATCH AIRTABLE WRITES: Instead of updating 3 fields with 3 separate Airtable modules, combine them into one Update Record module. 3 ops becomes 1 op.
+         107. USE FILTERS, NOT ROUTERS: A Router creates branches and charges operations for each branch evaluation. A Filter (built into the connection line) stops the flow for free if the condition is false. Use Filters for simple yes/no conditions.
+         108. CACHE AI RESPONSES: If you call OpenAI to generate a welcome message for a lead from 'Facebook Ad', save that response in Airtable. The next Facebook Ad lead gets the same template (with name substituted), not a fresh AI call.
+         109. SEPARATE SCENARIOS BY FREQUENCY: A scenario that runs every minute (watching for leads) costs more than one that runs every 15 minutes. Set polling scenarios to the minimum frequency you actually need. Most follow-up timing is day-level — 15-minute polling is fine.
+         110. USE INSTANT TRIGGERS: Webhooks (instant) cost the same as scheduled polling but fire only when needed. Replace all polling scenarios with webhooks where possible. S1 through S9 all use webhooks — only S10 (weekly report) uses scheduling.
+         111. MINIMISE AIRTABLE READS: Before reading a record, ask: do you already have this data from an earlier module in the same scenario? Store it in a Set Variable module and reference it downstream. Avoid re-fetching records you already have.
+         112. SLEEP MODULES ARE FREE: Make.com's Sleep module costs 0 operations. Use it for timed delays within a scenario (e.g., sending a second message 30 seconds after the first) instead of creating a new scheduled scenario.
+         113. BUNDLE NOTIFICATIONS: Instead of sending a Slack message from S2, S3, and S4 separately, accumulate the data and send one rich Slack message from S9. Fewer scenario triggers = fewer base operation charges.
+         114. USE MAKE.COM'S BUILT-IN FUNCTIONS: Date math, text parsing, and conditional logic done in Make.com's formula syntax costs 0 operations. The same done via an HTTP call or a custom function costs operations. Learn the formula library.
+         115. MONITOR YOUR OPERATION DASHBOARD WEEKLY: Make.com shows operations used per scenario per day. A scenario that suddenly uses 10x its normal ops has a bug (likely an infinite loop or missing stop condition). Check this every Sunday alongside your pipeline review.
+
+
+
+
+Estimated Monthly Operations Budget
+
+
+SCENARIO
+	OPS PER EXECUTION
+	EXECUTIONS/MONTH (300 LEADS)
+	MONTHLY OPS
+	NOTES
+	S1: Lead Capture Router
+	6
+	300
+	1,800
+	One per lead
+	S2: First Response
+	6
+	300
+	1,800
+	One per lead
+	S3: AI Qualifier
+	7
+	300
+	2,100
+	One per lead
+	S4: Follow-Up Engine
+	4 per touch
+	1,200 total touches
+	4,800
+	7 touches x 180 warm leads
+	S5: Booking + Reminders
+	8
+	60 bookings
+	480
+	20% booking rate on 300 leads
+	S6: No-Show Recovery
+	5
+	12 no-shows
+	60
+	20% no-show on 60 bookings
+	S7: Dormant Reactivation
+	3 per lead
+	90 dormant leads
+	270
+	30% go dormant
+	S8: Audit Booking Flow
+	8
+	30 direct audit requests
+	240
+	10% use audit form directly
+	S9: Slack Alerts
+	3
+	120 total alerts
+	360
+	Mix of hot leads + bookings
+	S10: Weekly Report
+	8
+	4 weekly
+	32
+	Sunday scheduled
+	S11: Social DM Tracker
+	4
+	30 manual entries
+	120
+	Team manual entries
+	
+
+
+
+SCENARIO
+	OPS PER EXECUTION
+	EXECUTIONS/MONTH (300 LEADS)
+	MONTHLY OPS
+	NOTES
+	S12: Paid Ad Capture
+	3
+	60 ad leads
+	180
+	20% of leads from ads
+	TOTAL
+	—
+	—
+	~12,242
+	Core plan (10k ops) + buffer needed
+	  
+
+
+
+  
+
+
+
+
+
+Part 6: The Vertical Playbook — Social Funnel's Own Pipeline
+This section is the operating manual for how Social Funnel uses Acquisition OS to find, engage, and close its own clients. If this section works in practice, we have the right to sell it.
+
+
+Our Lead Sources (Priority Order)
+
+
+SOURCE
+	HOW IT ENTERS SYSTEM
+	EXPECTED VOLUME/MONTH
+	TYPICAL LEAD SCORE
+	FIRST MESSAGE ANGLE
+	LinkedIn content reply
+	S11 manual entry or LinkedIn module
+	20-40
+	6-8
+	Reference the specific post they engaged with
+	LinkedIn DM response
+	S11 manual entry
+	15-30
+	7-9
+	Reference your outreach message, add audit offer
+	Facebook Lead Ad
+	S12 webhook
+	30-80
+	5-7
+	Generic intro + audit offer — personalise with company
+	Website contact form
+	S1 webhook
+	10-20
+	5-7
+	Reference their specific enquiry if message included
+	WhatsApp inbound
+	S1 webhook (360dialog)
+	5-15
+	8-10
+	They messaged us first
+— ultra-warm, move to audit fast
+	Referral
+	S11 manual entry
+	5-10
+	8-10
+	Name the referrer in first message
+	Cold DM (outbound)
+	S11 manual entry after reply
+	10-20
+	4-6
+	Reference the content piece you attached to the DM
+	
+
+
+
+The Social Funnel Pipeline Stages
+
+
+STAGE
+	DEFINITION
+	WHAT HAPPENS AUTOMATICALLY
+	TEAM ACTION
+	New Lead
+	Entered system, not yet contacted
+	S2 fires — 60-sec response sent
+	Monitor Slack #hot-leads
+	Contacted
+	First response sent
+	S3 scores, S4 begins if no booking
+	Review hot leads daily
+	Audit Requested
+	Filled audit form or replied asking for audit
+	S8 fires — confirmation + brief sent
+	Prepare for audit call
+	Audit Booked
+	Calendly booking confirmed
+	S5 fires — reminders scheduled
+	Prep audit brief from Airtable
+	Audit Done
+	Call completed
+	No automation — team drives this
+	Log findings, send proposal within 24h
+	Proposal Sent
+	Custom proposal delivered
+	No automation — manual follow-up
+	Chase every 2 days for 10 days
+	Client
+	Signed and onboarded
+	Add to client onboarding sequence
+	Begin installation
+	Churned
+	Client who left
+	Reactivation attempt at 90d
+	Personal outreach from director
+	Dead
+	No engagement after all touchpoints
+	No further automation
+	Remove from active pipeline
+	
+
+The Audit Call — What Happens Before, During, After
+Before (Automated)
+         * S8 sends confirmation message with Calendly link.
+         * S9 posts brief to Slack #hot-leads: lead's form answers, company context, suggested questions.
+         * S5 sends 24h and 1h reminders with meeting link.
+         * Team reviews Airtable record: lead score, source, message log, follow-up history.
+
+
+
+
+During (Manual — This Is Your Sales Call)
+         * Open with: 'Before we start, I want to be upfront — this 15 minutes is not a pitch. It is a diagnosis. I am going to ask you 3 questions, and we will know inside 5 minutes whether there is a real problem here worth fixing.'
+         * Question 1: How many enquiries do you receive in a week (roughly)?
+         * Question 2: How many site visits do you do in a week?
+         * Question 3: When someone enquiries at 7pm on a Friday, what happens?
+         * Calculate the pipeline conversion rate live on the call. Show the maths. The number is always shocking.
+         * Introduce Acquisition OS as the solution only AFTER they have acknowledged the problem using their own numbers.
+         * Close: 'We can have this running for you in 7 days. Do you want to see what that looks like?'
+
+
+
+
+After (Semi-Automated)
+         * Update Airtable: Pipeline Stage = Audit Done. Notes = key findings from call.
+         * This triggers a Slack alert to prepare proposal within 24 hours.
+         * Send personalised proposal (your pitch deck, customised with their numbers from the call).
+         * S4 does NOT restart — proposal follow-up is manual and high-touch at this stage.
+
+
+
+
+The Proposal-to-Close Sequence (Manual + Semi-Automated)
+
+
+DAY
+	ACTION
+	WHO
+	CHANNEL
+	0 (day of audit)
+	Update Airtable to Audit Done. Log key numbers from call.
+	Team
+	Airtable
+	1 (next day)
+	Send personalised proposal (pitch deck with their numbers).
+	Team
+	Email + WhatsApp
+	3
+	Follow-up: 'Did you get a chance to look through it?'
+	Team
+	WhatsApp
+	5
+	Send one-page summary of their specific ROI calculation.
+	Team
+	WhatsApp
+	7
+	Offer: 'Let me send you a quick screen recording walking through how this works for your specific setup.'
+	Team
+	WhatsApp
+	10
+	Final follow-up: 'Last time I will chase on this. Want to close it out or hear your thoughts?'
+	Team
+	Email
+	14
+	If no response: move to Dormant. S7 will pick up at 30 days.
+	Automated
+	Airtable + S7
+	
+
+  
+
+
+
+
+
+
+
+Part 7: Testing Protocol — Before Going Live
+Do not go live on real leads until you have completed this testing protocol. Every scenario should be tested in sequence using a test contact (your own phone number and email).
+
+
+Testing Sequence
+         116. STEP 1 — Test S1: Submit a test form to your S1 webhook URL using a tool like Postman or hurl.it. Verify: Airtable record created, all fields populated correctly, HTTP call to S2 and S3 fired.
+         117. STEP 2 — Test S2: Confirm you receive a WhatsApp message on your test number within 60 seconds. Confirm email received. Check Airtable: Pipeline Stage = Contacted, Last Contact Date updated.
+         118. STEP 3 — Test S3: Confirm Lead Score populated in Airtable. Check Slack #hot-leads for alert (if score >= 7). Confirm S4 or S7 triggered appropriately.
+         119. STEP 4 — Test S4: Manually advance Follow-Up Count in Airtable and trigger S4 for each touch. Verify: correct message sent via correct channel, Airtable updated, queue entry marked Sent.
+         120. STEP 5 — Test S5: Make a real Calendly booking using your test lead's email. Verify: confirmation WhatsApp received, Airtable updated, S4 queue cleared (Status = Skipped), Slack #bookings alert received.
+         121. STEP 6 — Test S6: Manually trigger no-show webhook or use Calendly's test event. Verify: recovery message within 5 minutes, Slack alert, Airtable updated.
+         122. STEP 7 — Test S7: Manually set Last Contact Date to 30 days ago on a test record. Run S7 manually. Verify: reactivation message received, Reactivation Attempt incremented.
+         123. STEP 8 — Test S10: Run S10 manually. Verify: Slack report received, Google Sheets row appended.
+         124. STEP 9 — End-to-End Test: Start from a fresh test submission (S1) and let the system run for 24 hours. Observe every automated action. Check every Airtable field. Fix anything unexpected.
+         125. STEP 10 — Soft Launch: Run on REAL leads for 7 days with daily manual review of every Airtable record. Only after 7 clean days does the system run without daily monitoring.
+  
+
+
+
+  
+
+
+
+
+
+Part 8: Productising This — How We Sell It
+Once Social Funnel's internal system is running cleanly for 30 days, we have proof. Now we build the client version. This section covers how the internal build becomes a sellable product.
+
+
+The Client Version Architecture
+Each client gets their own Airtable Base (not a shared table — separation protects client data). Each client gets their own Make.com Team with their scenario copies. The scenarios are identical to our internal ones, parameterised with their API keys and business details.
+What Changes Per Client
+         * Airtable Base ID and API key (their data, not ours)
+         * 360dialog API key (their WhatsApp number, not ours)
+         * SendGrid sending domain (emails come from their domain)
+         * Calendly API key (their booking link)
+         * OpenAI prompt context (their company name, vertical, USP)
+         * Slack workspace (their internal team notifications)
+         * Lead source webhooks (their website form, their Facebook Page)
+
+
+
+
+What Does NOT Change Per Client
+         * The scenario logic — identical flow, just different API connections
+         * The AI scoring criteria — universal across all construction firms
+         * The 7-touch sequence timing and structure
+         * The reporting structure and Airtable data model
+
+
+
+
+The Onboarding Checklist — 7-Day Installation
+
+
+DAY
+	TASK
+	PERSON
+	TIME
+	Day 1
+	Client creates accounts: Make.com, Airtable, 360dialog, Calendly, SendGrid
+	Client (guided)
+	2 hours
+	Day 1
+	Social Funnel connects all accounts in Make.com. Imports scenario templates.
+	Team
+	3 hours
+	Day 2
+	Airtable base configured with client's pipeline stages and custom fields.
+	Team
+	2 hours
+	Day 2
+	WhatsApp number verified. Test message sent to client's number.
+	Team
+	1 hour
+	Day 3
+	Calendly event created. Webhook configured. Test booking flow run.
+	Team
+	1.5 hours
+	Day 3
+	SendGrid domain verified. Email templates customised with client's branding.
+	Team
+	2 hours
+	Day 4
+	Facebook Page connected. Test lead form submission processed.
+	Team
+	1 hour
+	Day 4
+	OpenAI prompts customised with client's company context and USP.
+	Team
+	1 hour
+	Day 5
+	Website contact form webhook connected (requires developer access or Tally embed).
+	Team
+	1 hour
+	Day 5
+	Full end-to-end test with client watching live.
+	Both
+	2 hours
+	Day 6
+	Client team trained: Airtable pipeline management, Slack alerts, manual DM logging.
+	Team
+	2 hours
+	Day 7
+	Go live. Social Funnel monitors Day 7 in real time. First leads processed.
+	Team
+	Ongoing

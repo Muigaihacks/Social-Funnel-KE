@@ -5,6 +5,7 @@
 
 import { prisma } from "./db.js";
 import type { NormalizedLead } from "./normalize.js";
+import { triggerN8nOnIngest } from "./n8nTrigger.js";
 
 export type IngestSource = "facebook" | "web" | "whatsapp" | "linkedin";
 
@@ -67,6 +68,15 @@ export async function ingestLead(
       },
     });
 
+    await triggerN8nOnIngest({
+      leadId: updated.id,
+      deduplicated: true,
+      pipelineStage: updated.pipelineStage,
+      tenantId,
+      source,
+      normalized,
+    });
+
     return {
       leadId: updated.id,
       deduplicated: true,
@@ -101,6 +111,15 @@ export async function ingestLead(
       action: "ingested",
       payload: { source, deduplicated: false },
     },
+  });
+
+  await triggerN8nOnIngest({
+    leadId: lead.id,
+    deduplicated: false,
+    pipelineStage: lead.pipelineStage,
+    tenantId,
+    source,
+    normalized,
   });
 
   return {
