@@ -228,6 +228,55 @@ router.post("/leads/:leadId/followups", async (req, res) => {
   }
 });
 
+/** List follow-up queue rows for a lead (dev, demos, dashboard). ?status=pending|all */
+router.get("/leads/:leadId/followups", async (req, res) => {
+  try {
+    const { leadId } = req.params;
+    const tenantId = getTenantId(req.headers as Record<string, unknown>);
+    const statusQ = typeof req.query.status === "string" ? req.query.status : "all";
+
+    const lead = await prisma.lead.findFirst({
+      where: { id: leadId, ...(tenantId ? { tenantId } : {}) },
+    });
+    if (!lead) return res.status(404).json({ ok: false, error: "Lead not found" });
+
+    const items = await prisma.followUpQueue.findMany({
+      where: {
+        leadId: lead.id,
+        ...(statusQ !== "all" ? { status: statusQ } : {}),
+      },
+      orderBy: { touchIndex: "asc" },
+    });
+
+    const pending = items.filter((i) => i.status === "pending").length;
+
+    return res.json({
+      ok: true,
+      leadId: lead.id,
+      summary: {
+        total: items.length,
+        pending,
+        byStatus: {
+          pending: items.filter((i) => i.status === "pending").length,
+          sent: items.filter((i) => i.status === "sent").length,
+          skipped: items.filter((i) => i.status === "skipped").length,
+          aborted: items.filter((i) => i.status === "aborted").length,
+        },
+      },
+      items: items.map((q) => ({
+        followUpId: q.id,
+        touchIndex: q.touchIndex,
+        channel: q.channel,
+        scheduledFor: q.scheduledFor,
+        status: q.status,
+        sentAt: q.sentAt,
+      })),
+    });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
 router.get("/due-followups", async (req, res) => {
   try {
     const tenantId = getTenantId(req.headers as Record<string, unknown>);

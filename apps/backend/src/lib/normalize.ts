@@ -14,7 +14,7 @@ export const NormalizedLeadSchema = z.object({
   email: z.string().email().optional().or(z.literal("")),
   source: z.string().optional(),
   channel: z.enum(CHANNELS),
-  leadType: z.enum(["REAL_ESTATE", "CONSTRUCTION"]).optional(),
+  leadType: z.string().optional(),
   budget: z.string().optional(),
   timeline: z.string().optional(),
   whatsappOptIn: z.boolean().optional(),
@@ -70,7 +70,7 @@ export function normalizeWebhook(body: unknown): NormalizedLead {
 
   const name = (raw.name ?? raw.fullName ?? [raw.firstName, raw.lastName].filter(Boolean).join(" ")) || undefined;
   const source = [raw.utm_source, raw.utm_medium, raw.utm_campaign].filter(Boolean).join("_") || "web";
-  const leadType = raw.leadType?.toUpperCase() === "CONSTRUCTION" ? "CONSTRUCTION" : raw.leadType?.toUpperCase() === "REAL_ESTATE" ? "REAL_ESTATE" : undefined;
+  const leadType = raw.leadType?.trim() || undefined;
   return {
     phone: toE164(raw.phone),
     name: name || undefined,

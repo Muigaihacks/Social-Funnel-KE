@@ -27,7 +27,7 @@ model Lead {
   sources String[] @default([]) // All sources ever (append on dedupe)
 
   // Qualification (Brief Section 4)
-  leadType LeadType? @map("lead_type") // Real Estate | Construction
+  leadType String? @map("lead_type") // Flexible vertical/industry label
   budget   String?
   timeline String?
 
@@ -56,11 +56,6 @@ model Lead {
   messageLogs     MessageLog[]
   followUpQueue   FollowUpQueue[]
   stageTransitions StageTransition[]
-}
-
-enum LeadType {
-  REAL_ESTATE
-  CONSTRUCTION
 }
 
 // --- Stage transition timestamps (audit) ---
