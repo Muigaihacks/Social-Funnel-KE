@@ -439,6 +439,146 @@ router.post("/calendly-event", async (req, res) => {
   }
 });
 
+router.get("/leads/by-email", async (req, res) => {
+  try {
+    const email = typeof req.query.email === "string" ? req.query.email.trim().toLowerCase() : "";
+    if (!email) return res.status(400).json({ ok: false, error: "email query param required" });
+    const tenantId = getTenantId(req.headers as Record<string, unknown>);
+
+    const lead = await prisma.lead.findFirst({
+      where: { email, ...(tenantId ? { tenantId } : {}) },
+      orderBy: { updatedAt: "desc" },
+    });
+    if (!lead) return res.status(404).json({ ok: false, error: "No lead found with that email" });
+
+    const recentMessages = await prisma.messageLog.findMany({
+      where: { leadId: lead.id },
+      orderBy: { sentAt: "desc" },
+      take: 10,
+    });
+
+    const pendingFollowUps = await prisma.followUpQueue.count({
+      where: { leadId: lead.id, status: "pending" },
+    });
+
+    return res.json({
+      ok: true,
+      lead: {
+        id: lead.id,
+        name: lead.name,
+        email: lead.email,
+        phone: lead.phone,
+        leadScore: lead.leadScore,
+        scoreReason: lead.scoreReason,
+        pipelineStage: lead.pipelineStage,
+        leadType: lead.leadType,
+        followUpCount: lead.followUpCount,
+        lastContactDate: lead.lastContactDate,
+      },
+      recentMessages: recentMessages.map((m) => ({
+        id: m.id,
+        channel: m.channel,
+        direction: m.direction,
+        body: m.body,
+        sentAt: m.sentAt,
+      })),
+      pendingFollowUps,
+    });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+router.post("/leads/:leadId/pause-followups", async (req, res) => {
+  try {
+    const { leadId } = req.params;
+    const tenantId = getTenantId(req.headers as Record<string, unknown>);
+    const resumeAfterDays = Number(req.body?.resumeAfterDays ?? 0);
+
+    const lead = await prisma.lead.findFirst({
+      where: { id: leadId, ...(tenantId ? { tenantId } : {}) },
+    });
+    if (!lead) return res.status(404).json({ ok: false, error: "Lead not found" });
+
+    if (resumeAfterDays > 0) {
+      const now = new Date();
+      const pending = await prisma.followUpQueue.findMany({
+        where: { leadId: lead.id, status: "pending" },
+        orderBy: { scheduledFor: "asc" },
+      });
+      const baseDelay = resumeAfterDays * 24 * 60 * 60 * 1000;
+      await prisma.$transaction(
+        pending.map((fq, idx) =>
+          prisma.followUpQueue.update({
+            where: { id: fq.id },
+            data: { scheduledFor: new Date(now.getTime() + baseDelay + idx * 2 * 24 * 60 * 60 * 1000) },
+          })
+        )
+      );
+      await prisma.activityLog.create({
+        data: { leadId: lead.id, action: "followups_rescheduled", payload: { resumeAfterDays, count: pending.length } },
+      });
+      return res.json({ ok: true, action: "rescheduled", count: pending.length, resumeAfterDays });
+    }
+
+    const result = await prisma.followUpQueue.updateMany({
+      where: { leadId: lead.id, status: "pending" },
+      data: { status: "aborted" },
+    });
+
+    await prisma.activityLog.create({
+      data: { leadId: lead.id, action: "followups_paused", payload: { count: result.count } },
+    });
+
+    return res.json({ ok: true, action: "paused", count: result.count });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+const UpdatePrioritySchema = z.object({
+  score: z.number().int().min(1).max(10).optional(),
+  reason: z.string().optional(),
+  pipelineStage: z.string().optional(),
+});
+
+router.post("/leads/:leadId/update-priority", async (req, res) => {
+  try {
+    const { leadId } = req.params;
+    const body = UpdatePrioritySchema.parse(req.body ?? {});
+    const tenantId = getTenantId(req.headers as Record<string, unknown>);
+
+    const lead = await prisma.lead.findFirst({
+      where: { id: leadId, ...(tenantId ? { tenantId } : {}) },
+    });
+    if (!lead) return res.status(404).json({ ok: false, error: "Lead not found" });
+
+    const data: Record<string, unknown> = {};
+    if (body.score !== undefined) data.leadScore = body.score;
+    if (body.reason) data.scoreReason = body.reason;
+    if (body.pipelineStage) {
+      data.pipelineStage = body.pipelineStage;
+      await prisma.stageTransition.create({
+        data: { leadId: lead.id, fromStage: lead.pipelineStage, toStage: body.pipelineStage },
+      });
+    }
+
+    const updated = await prisma.lead.update({ where: { id: lead.id }, data });
+
+    await prisma.activityLog.create({
+      data: {
+        leadId: lead.id,
+        action: "priority_updated",
+        payload: { oldScore: lead.leadScore, newScore: updated.leadScore, pipelineStage: updated.pipelineStage },
+      },
+    });
+
+    return res.json({ ok: true, leadId: updated.id, score: updated.leadScore, pipelineStage: updated.pipelineStage });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
 router.get("/dormant-leads", async (req, res) => {
   try {
     const tenantId = getTenantId(req.headers as Record<string, unknown>);
