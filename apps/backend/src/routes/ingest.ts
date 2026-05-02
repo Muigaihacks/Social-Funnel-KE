@@ -17,10 +17,25 @@ const IngestBodySchema = z.object({
   _channel: z.enum(["facebook", "web", "whatsapp", "linkedin"]).optional(),
 }).catchall(z.unknown());
 
+function mapToIngestSource(val: string): IngestSource | null {
+  const v = val.toLowerCase();
+  if (v.includes("linkedin")) return "linkedin";
+  if (v.includes("facebook") || v.includes("fb") || v.includes("instagram") || v.includes("ig")) return "facebook";
+  if (v.includes("whatsapp") || v.includes("wa")) return "whatsapp";
+  if (v === "web" || v.includes("website") || v.includes("organic") || v.includes("google")) return "web";
+  return null;
+}
+
 function detectSource(body: unknown): IngestSource {
   const b = body as Record<string, unknown>;
   if (b._source && typeof b._source === "string") return b._source as IngestSource;
   if (b._channel && typeof b._channel === "string") return b._channel as IngestSource;
+  for (const field of ["source", "marketingSource", "ingestSource"]) {
+    if (b[field] && typeof b[field] === "string") {
+      const mapped = mapToIngestSource(b[field] as string);
+      if (mapped) return mapped;
+    }
+  }
   if (b.contacts && Array.isArray(b.contacts)) return "whatsapp";
   if (b.messages && Array.isArray(b.messages)) return "whatsapp";
   if (b.wa_id != null) return "whatsapp";

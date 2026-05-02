@@ -60,22 +60,28 @@ export function normalizeWebhook(body: unknown): NormalizedLead {
     lastName: z.string().optional(),
     phone: z.string(),
     email: z.string().optional(),
+    source: z.string().optional(),
+    marketingSource: z.string().optional(),
+    ingestSource: z.string().optional(),
     utm_source: z.string().optional(),
     utm_medium: z.string().optional(),
     utm_campaign: z.string().optional(),
     budget: z.string().optional(),
     timeline: z.string().optional(),
     leadType: z.string().optional(),
+    company: z.string().optional(),
+    leadSummary: z.string().optional(),
   }).passthrough().parse(body);
 
   const name = (raw.name ?? raw.fullName ?? [raw.firstName, raw.lastName].filter(Boolean).join(" ")) || undefined;
-  const source = [raw.utm_source, raw.utm_medium, raw.utm_campaign].filter(Boolean).join("_") || "web";
+  const utmSource = [raw.utm_source, raw.utm_medium, raw.utm_campaign].filter(Boolean).join("_");
+  const source = raw.source ?? raw.marketingSource ?? raw.ingestSource ?? (utmSource || "web");
   const leadType = raw.leadType?.trim() || undefined;
   return {
     phone: toE164(raw.phone),
     name: name || undefined,
     email: raw.email?.trim() || undefined,
-    source: source || "web",
+    source,
     channel: "web",
     leadType,
     budget: raw.budget || undefined,

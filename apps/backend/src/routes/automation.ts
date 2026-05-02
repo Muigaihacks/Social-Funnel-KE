@@ -441,7 +441,9 @@ router.post("/calendly-event", async (req, res) => {
 
 router.get("/leads/by-email", async (req, res) => {
   try {
-    const email = typeof req.query.email === "string" ? req.query.email.trim().toLowerCase() : "";
+    const raw = req.query.email;
+    const email = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+    console.log("[by-email] raw query:", JSON.stringify(req.query), "| resolved email:", email);
     if (!email) return res.status(400).json({ ok: false, error: "email query param required" });
     const tenantId = getTenantId(req.headers as Record<string, unknown>);
 
@@ -600,6 +602,39 @@ router.get("/dormant-leads", async (req, res) => {
     });
 
     return res.json({ ok: true, items: leads });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+router.get("/pipeline-stats", async (req, res) => {
+  try {
+    const tenantId = getTenantId(req.headers as Record<string, unknown>);
+    const now = new Date();
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const where = tenantId ? { tenantId } : {};
+
+    const [totalLeads, newThisWeek, byStage, followUpsSent, hotLeads, warmLeads, coldLeads] = await Promise.all([
+      prisma.lead.count({ where }),
+      prisma.lead.count({ where: { ...where, createdAt: { gte: weekAgo } } }),
+      prisma.lead.groupBy({ by: ["pipelineStage"], where, _count: true }),
+      prisma.followUpQueue.count({ where: { status: "sent", sentAt: { gte: weekAgo } } }),
+      prisma.lead.count({ where: { ...where, leadScore: { gte: 7 } } }),
+      prisma.lead.count({ where: { ...where, leadScore: { gte: 4, lt: 7 } } }),
+      prisma.lead.count({ where: { ...where, leadScore: { lt: 4 } } }),
+    ]);
+
+    return res.json({
+      ok: true,
+      period: { from: weekAgo.toISOString(), to: now.toISOString() },
+      stats: {
+        totalLeads,
+        newThisWeek,
+        followUpsSentThisWeek: followUpsSent,
+        byScore: { hot: hotLeads, warm: warmLeads, cold: coldLeads },
+        byStage: Object.fromEntries(byStage.map((s) => [s.pipelineStage, s._count])),
+      },
+    });
   } catch (err) {
     return res.status(400).json({ ok: false, error: err instanceof Error ? err.message : "Failed" });
   }
