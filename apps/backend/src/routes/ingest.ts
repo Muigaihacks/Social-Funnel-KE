@@ -19,11 +19,15 @@ const IngestBodySchema = z.object({
 
 function mapToIngestSource(val: string): IngestSource | null {
   const v = val.toLowerCase();
-  if (v.includes("linkedin")) return "linkedin";
-  if (v.includes("facebook") || v.includes("fb") || v.includes("instagram") || v.includes("ig")) return "facebook";
-  if (v.includes("whatsapp") || v.includes("wa")) return "whatsapp";
-  if (v === "web" || v.includes("website") || v.includes("organic") || v.includes("google")) return "web";
-  return null;
+  // Only exact platform names route to platform-specific normalizers
+  // Ad campaign tags (linkedin_ad, facebook_ad etc.) stay as web — they're standard form submissions
+  if (v === "linkedin") return "linkedin";
+  if (v === "facebook" || v === "instagram") return "facebook";
+  if (v === "whatsapp") return "whatsapp";
+  if (v === "web") return "web";
+  // Everything else (linkedin_ad, facebook_ad, google_ad, etc.) → web normalizer
+  // The original source value is still preserved in the normalized lead's source field
+  return "web";
 }
 
 function detectSource(body: unknown): IngestSource {
