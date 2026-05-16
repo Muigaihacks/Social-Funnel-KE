@@ -3,6 +3,8 @@
 
 generator client {
   provider = "prisma-client-js"
+  // Monorepo-safe: avoids missing root node_modules/.prisma (hoist/sync issues).
+  output   = "../src/generated/prisma"
 }
 
 datasource db {
@@ -37,7 +39,7 @@ model Lead {
 
   // State
   followUpCount   Int       @default(0) @map("follow_up_count")
-  pipelineStage   String    @default("new") @map("pipeline_stage") // new | warm | hot | audit_booked | client | dead | nurture
+  pipelineStage   String    @default("new") @map("pipeline_stage") // new | contacted | warm | hot | audit_booked | no_show | client | dead | nurture
   lastContactDate DateTime? @map("last_contact_date")
 
   // Compliance (Kenya DPA 2019, WhatsApp opt-in)
@@ -88,6 +90,34 @@ model ActivityLog {
   action   String   // e.g. ingested | scored | follow_up_sent | booked | no_show
   payload  Json?    // flexible metadata
   createdAt DateTime @default(now()) @map("created_at")
+}
+
+// --- Weekly report snapshots (S10 → dashboard history + WoW analytics) ---
+model WeeklyReportSnapshot {
+  id         String   @id @default(cuid())
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  weekStart  DateTime @map("week_start")
+  weekEnd    DateTime @map("week_end")
+  metrics    Json
+  commentary String?  @db.Text
+  tenantId   String   @default("") @map("tenant_id")
+
+  @@unique([weekStart, tenantId])
+  @@index([weekStart])
+  @@map("weekly_report_snapshots")
+}
+
+// --- Technician / dead-man pings (n8n → optional monitoring or alerting) ---
+model WorkflowHeartbeat {
+  id          String   @id @default(cuid())
+  workflowKey String   @map("workflow_key")
+  status      String
+  message     String?  @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([workflowKey, createdAt])
+  @@map("workflow_heartbeats")
 }
 
 // --- 7-Touch & nurture queue (Section 3D, 3C cold) ---

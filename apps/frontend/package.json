@@ -3,12 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3000",
-    "build": "next build",
-    "start": "next start -p 3000",
-    "lint": "next lint"
+    "dev": "npx next dev -p 3000",
+    "dev:turbo": "npx next dev --turbo -p 3000",
+    "dev:clean": "rm -rf .next && npx next dev -p 3000",
+    "build": "npx next build",
+    "start": "npx next start -p 3000",
+    "lint": "npx next lint"
   },
   "dependencies": {
+    "@swc/helpers": "0.5.15",
     "next": "^15.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

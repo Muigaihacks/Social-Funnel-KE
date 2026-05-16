@@ -4,8 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "dev": "npx tsx watch src/index.ts",
+    "dev:safe": "npm run db:generate && npm run build && node dist/index.js",
+    "dev:safe:tsx": "npm run db:generate && npx tsx src/index.ts",
+    "dev:watch-compile": "tsc --watch --preserveWatchOutput",
+    "dev:watch-run": "node --watch dist/index.js",
+    "build": "tsc && (test -d src/generated || (echo 'Run npm run db:generate first (missing src/generated).' && exit 1)) && rm -rf dist/generated && cp -R src/generated dist/",
     "start": "node dist/index.js",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
@@ -20,6 +24,7 @@
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^20.14.0",
+    "esbuild": "^0.27.0",
     "prisma": "^5.22.0",
     "tsx": "^4.19.0",
     "typescript": "^5.5.0"

@@ -16,6 +16,7 @@ build
 !.env.example
 
 # IDE
+.cursor
 .idea
 .vscode/*
 !.vscode/settings.json
@@ -32,6 +33,7 @@ npm-debug.log*
 
 # Prisma
 apps/backend/prisma/migrations/*_migration_lock.toml
+apps/backend/src/generated
 
 # n8n (self-hosted data)
 n8n/data
