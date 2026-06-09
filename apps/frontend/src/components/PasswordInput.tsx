@@ -9,6 +9,7 @@ type PasswordInputProps = {
   autoComplete?: string;
   placeholder?: string;
   className?: string;
+  autoFocus?: boolean;
   /** Extra classes on the outer relative wrapper (e.g. mt-1) */
   wrapperClassName?: string;
 };
@@ -39,6 +40,7 @@ export function PasswordInput({
   autoComplete,
   placeholder,
   className = "",
+  autoFocus,
   wrapperClassName = "mt-1",
 }: PasswordInputProps) {
   const [visible, setVisible] = useState(false);
@@ -58,6 +60,7 @@ export function PasswordInput({
         minLength={minLength}
         autoComplete={autoComplete}
         placeholder={placeholder}
+        autoFocus={autoFocus}
         className={`${inputClass} pr-10`}
       />
       <button
