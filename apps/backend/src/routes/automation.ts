@@ -1396,7 +1396,7 @@ router.get("/analytics/attribution", async (req, res) => {
       prisma.$queryRaw<Array<{ channel: string; new_leads: bigint; booked_like: bigint }>>`
         SELECT l."channel" AS channel,
           COUNT(*)::bigint AS new_leads,
-          SUM(CASE WHEN l."pipeline_stage" IN ('audit_booked', 'client') THEN 1 ELSE 0 END)::bigint AS booked_like
+          SUM(CASE WHEN l."pipeline_stage" IN ('booked', 'closed') THEN 1 ELSE 0 END)::bigint AS booked_like
         FROM "Lead" l
         WHERE l."createdAt" >= ${from} AND l."createdAt" <= ${to}
         ${tenantSql}

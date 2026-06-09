@@ -141,8 +141,8 @@ export function RollingCharts({ data }: { data: AttributionPayload }) {
           Booking proxy by channel
         </h3>
         <p className="mt-1 text-xs text-[var(--text-muted)]">
-          Share of new leads in window whose stage is <code className="text-[10px]">audit_booked</code> or{" "}
-          <code className="text-[10px]">client</code>.
+          Share of new leads in window whose stage is <code className="text-[10px]">booked</code> or{" "}
+          <code className="text-[10px]">closed</code>.
         </p>
         <div className="mt-4 space-y-3">
           {data.bookingRateByChannel.map((row) => (

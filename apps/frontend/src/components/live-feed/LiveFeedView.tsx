@@ -102,7 +102,7 @@ export function LiveFeedView() {
       <header className="mb-8 border-b border-[var(--card-border)] pb-6">
         <div className="flex items-center gap-3 mb-2">
           <span className="flex h-6 w-6 items-center justify-center rounded bg-gradient-to-br from-[var(--sf-teal)] to-emerald-600 text-xs shadow-inner">
-            📊
+            🧠
           </span>
           <span className="text-xs font-bold uppercase tracking-widest text-[var(--sf-teal)]">
             Acquisition OS Business Intelligence Hub
@@ -135,50 +135,53 @@ export function LiveFeedView() {
       ) : null}
 
       <section className="mb-10" aria-label="Stage counts">
-        <h2 className="mb-4 text-xs font-semibold uppercase tracking-wider text-[var(--text-dim)]">Stages (snapshot)</h2>
+        <h2 className="mb-4 text-xs font-semibold uppercase tracking-wider text-[var(--text-dim)]">Pipeline Flow</h2>
         {loading && !summary ? (
           <p className="text-sm text-[var(--text-dim)]">Loading stage distribution…</p>
         ) : sortedStages.length === 0 ? (
           <p className="text-sm text-[var(--text-dim)]">No leads in database yet.</p>
         ) : (
-          <ul className="space-y-4">
-            {sortedStages.map((row) => {
+          <div className="flex flex-col md:flex-row gap-2">
+            {sortedStages.map((row, idx) => {
               const active = selectedStage === row.stage;
-              const widthPct = (row.count / maxCount) * 100;
+              const isLast = idx === sortedStages.length - 1;
               return (
-                <li key={row.stage}>
+                <div key={row.stage} className="flex-1 flex flex-col md:flex-row items-center">
                   <button
                     type="button"
                     onClick={() => setSelectedStage(active ? null : row.stage)}
                     className={[
-                      "group w-full rounded-2xl border px-4 py-3 text-left transition-colors",
+                      "group relative w-full flex-1 flex flex-col items-center justify-center rounded-lg border px-2 py-4 text-center transition-all",
                       active
-                        ? "border-sf-teal/50 bg-sf-teal/10"
-                        : "border-[var(--card-border)] bg-[var(--card-surface)] hover:border-[var(--card-border)]",
+                        ? "border-sf-teal/50 bg-sf-teal/10 shadow-[0_0_15px_rgba(var(--sf-teal-rgb),0.15)]"
+                        : "border-[var(--card-border)] bg-[var(--card-surface)] hover:border-sf-teal/30 hover:bg-sf-teal/5",
                     ].join(" ")}
                   >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-sm font-medium capitalize text-[var(--foreground)]">
-                        {row.stage.replace(/_/g, " ")}
-                      </span>
-                      <span className="font-mono text-lg font-semibold tabular-nums text-sf-teal">
-                        {row.count}
-                      </span>
-                    </div>
-                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-[var(--chart-grid)]">
-                      <div
-                        className="funnel-live-bar h-full rounded-full bg-gradient-to-r from-sf-teal to-sf-brand transition-[width] duration-700 ease-out"
-                        style={{ width: `${widthPct}%` }}
-                      />
-                    </div>
-                    <p className="mt-2 text-[10px] text-[var(--text-faint)]">
-                      {active ? "Click again to collapse" : "Click for leads in this stage"}
-                    </p>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] group-hover:text-[var(--foreground)] transition-colors">
+                      {row.stage.replace(/_/g, " ")}
+                    </span>
+                    <span className="mt-2 text-2xl font-semibold tabular-nums text-[var(--foreground)] group-hover:text-sf-teal transition-colors">
+                      {row.count}
+                    </span>
                   </button>
-                </li>
+                  {!isLast && (
+                    <div className="hidden md:flex ml-2 items-center justify-center text-[var(--card-border)]">
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="m9 18 6-6-6-6"/>
+                      </svg>
+                    </div>
+                  )}
+                  {!isLast && (
+                    <div className="md:hidden my-2 flex items-center justify-center text-[var(--card-border)]">
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="m6 9 6 6 6-6"/>
+                      </svg>
+                    </div>
+                  )}
+                </div>
               );
             })}
-          </ul>
+          </div>
         )}
       </section>
 

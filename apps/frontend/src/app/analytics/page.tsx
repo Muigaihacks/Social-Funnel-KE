@@ -109,7 +109,7 @@ export default async function AnalyticsPage({
         <header className="mb-10 border-b border-[var(--card-border)] pb-6">
           <div className="flex items-center gap-3 mb-2">
             <span className="flex h-6 w-6 items-center justify-center rounded bg-gradient-to-br from-[var(--sf-teal)] to-emerald-600 text-xs shadow-inner">
-              📊
+              🧠
             </span>
             <span className="text-xs font-bold uppercase tracking-widest text-[var(--sf-teal)]">
               Acquisition OS Business Intelligence Hub
