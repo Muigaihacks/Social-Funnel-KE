@@ -1,12 +1,47 @@
 import { Router } from "express";
 import { z } from "zod";
+import { Prisma } from "../generated/prisma/index.js";
 import { prisma } from "../lib/db.js";
+import { CHANNELS, normalizeWebhook, NormalizedLeadSchema } from "../lib/normalize.js";
+import { ingestLead } from "../lib/ingestCore.js";
 
 const router = Router();
+
+/** n8n path params and Set-node strings sometimes include trailing newlines; Express leaves them in `:leadId`. */
+function normalizedLeadIdParam(raw: string | undefined): string {
+  try {
+    return decodeURIComponent(String(raw ?? "").trim());
+  } catch {
+    return String(raw ?? "").trim();
+  }
+}
 
 function getTenantId(headers: Record<string, unknown>): string | null {
   const raw = headers["x-tenant-id"];
   return typeof raw === "string" ? raw : null;
+}
+
+function internalSecretOk(req: { headers: Record<string, unknown> }): boolean {
+  const expected = process.env.INTERNAL_AUTOMATION_SECRET;
+  if (!expected || expected.length === 0) return true;
+  const got = req.headers["x-internal-secret"];
+  return typeof got === "string" && got === expected;
+}
+
+/** Lead id is globally unique; `x-tenant-id` only hides cross-tenant rows when the lead has a non-null tenant_id. */
+function leadFailsTenantGate(lead: { tenantId: string | null }, requestTenantId: string | null): boolean {
+  if (!requestTenantId) return false;
+  if (!lead.tenantId) return false;
+  return lead.tenantId !== requestTenantId;
+}
+
+async function findLeadVisibleToTenant(leadIdRaw: string, tenantId: string | null) {
+  const leadId = normalizedLeadIdParam(leadIdRaw);
+  if (!leadId) return null;
+  const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+  if (!lead) return null;
+  if (leadFailsTenantGate(lead, tenantId)) return null;
+  return lead;
 }
 
 const MarkContactedSchema = z.object({
@@ -21,9 +56,7 @@ router.post("/leads/:leadId/mark-contacted", async (req, res) => {
     const tenantId = getTenantId(req.headers as Record<string, unknown>);
     const now = body.respondedAt ? new Date(body.respondedAt) : new Date();
 
-    const lead = await prisma.lead.findFirst({
-      where: { id: leadId, ...(tenantId ? { tenantId } : {}) },
-    });
+    const lead = await findLeadVisibleToTenant(leadId, tenantId);
     if (!lead) return res.status(404).json({ ok: false, error: "Lead not found" });
 
     const updated = await prisma.lead.update({
@@ -56,6 +89,80 @@ router.post("/leads/:leadId/mark-contacted", async (req, res) => {
   }
 });
 
+const TerminateLeadSchema = z.object({
+  reason: z.string().max(2000).optional(),
+});
+
+/** Mark lead as dead, skip pending follow-ups, audit trail (dashboard or n8n). */
+router.post("/leads/:leadId/terminate", async (req, res) => {
+  try {
+    const { leadId } = req.params;
+    const body = TerminateLeadSchema.parse(req.body ?? {});
+    const tenantId = getTenantId(req.headers as Record<string, unknown>);
+
+    const lead = await findLeadVisibleToTenant(leadId, tenantId);
+    if (!lead) return res.status(404).json({ ok: false, error: "Lead not found" });
+
+    const fromStage = lead.pipelineStage;
+    const updated = await prisma.lead.update({
+      where: { id: lead.id },
+      data: {
+        pipelineStage: "dead",
+        lastContactDate: new Date(),
+      },
+    });
+
+    await prisma.stageTransition.create({
+      data: { leadId: updated.id, fromStage, toStage: "dead" },
+    });
+
+    await prisma.followUpQueue.updateMany({
+      where: { leadId: updated.id, status: "pending" },
+      data: { status: "skipped" },
+    });
+
+    await prisma.activityLog.create({
+      data: {
+        leadId: updated.id,
+        action: "lead_terminated",
+        payload: { fromStage, reason: body.reason ?? null },
+      },
+    });
+
+    return res.json({ ok: true, leadId: updated.id, pipelineStage: updated.pipelineStage });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+const DashboardNoteSchema = z.object({
+  text: z.string().min(1).max(8000),
+});
+
+/** Internal dashboard note — stored as activity row (`dashboard_note`), shown on lead profile. */
+router.post("/leads/:leadId/notes", async (req, res) => {
+  try {
+    const { leadId } = req.params;
+    const body = DashboardNoteSchema.parse(req.body ?? {});
+    const tenantId = getTenantId(req.headers as Record<string, unknown>);
+
+    const lead = await findLeadVisibleToTenant(leadId, tenantId);
+    if (!lead) return res.status(404).json({ ok: false, error: "Lead not found" });
+
+    await prisma.activityLog.create({
+      data: {
+        leadId: lead.id,
+        action: "dashboard_note",
+        payload: { text: body.text.trim() },
+      },
+    });
+
+    return res.status(201).json({ ok: true, leadId: lead.id });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
 const UpsertScoreSchema = z.object({
   score: z.number().int().min(1).max(10),
   reason: z.string().min(1),
@@ -68,9 +175,7 @@ router.post("/leads/:leadId/score", async (req, res) => {
     const { score, reason, stage } = UpsertScoreSchema.parse(req.body ?? {});
     const tenantId = getTenantId(req.headers as Record<string, unknown>);
 
-    const lead = await prisma.lead.findFirst({
-      where: { id: leadId, ...(tenantId ? { tenantId } : {}) },
-    });
+    const lead = await findLeadVisibleToTenant(leadId, tenantId);
     if (!lead) return res.status(404).json({ ok: false, error: "Lead not found" });
 
     const updated = await prisma.lead.update({
@@ -111,9 +216,7 @@ router.post("/leads/:leadId/messages", async (req, res) => {
     const tenantId = getTenantId(req.headers as Record<string, unknown>);
     const sentAt = body.sentAt ? new Date(body.sentAt) : new Date();
 
-    const lead = await prisma.lead.findFirst({
-      where: { id: leadId, ...(tenantId ? { tenantId } : {}) },
-    });
+    const lead = await findLeadVisibleToTenant(leadId, tenantId);
     if (!lead) return res.status(404).json({ ok: false, error: "Lead not found" });
 
     const log = await prisma.messageLog.create({
@@ -196,9 +299,7 @@ router.post("/leads/:leadId/followups", async (req, res) => {
     const body = CreateFollowUpsSchema.parse(req.body ?? {});
     const tenantId = getTenantId(req.headers as Record<string, unknown>);
 
-    const lead = await prisma.lead.findFirst({
-      where: { id: leadId, ...(tenantId ? { tenantId } : {}) },
-    });
+    const lead = await findLeadVisibleToTenant(leadId, tenantId);
     if (!lead) return res.status(404).json({ ok: false, error: "Lead not found" });
 
     const created = await prisma.$transaction(
@@ -235,9 +336,7 @@ router.get("/leads/:leadId/followups", async (req, res) => {
     const tenantId = getTenantId(req.headers as Record<string, unknown>);
     const statusQ = typeof req.query.status === "string" ? req.query.status : "all";
 
-    const lead = await prisma.lead.findFirst({
-      where: { id: leadId, ...(tenantId ? { tenantId } : {}) },
-    });
+    const lead = await findLeadVisibleToTenant(leadId, tenantId);
     if (!lead) return res.status(404).json({ ok: false, error: "Lead not found" });
 
     const items = await prisma.followUpQueue.findMany({
@@ -279,7 +378,6 @@ router.get("/leads/:leadId/followups", async (req, res) => {
 
 router.get("/due-followups", async (req, res) => {
   try {
-    const tenantId = getTenantId(req.headers as Record<string, unknown>);
     const now = new Date();
     const limit = Math.min(Number(req.query.limit ?? 200), 1000);
 
@@ -288,7 +386,6 @@ router.get("/due-followups", async (req, res) => {
         status: "pending",
         scheduledFor: { lte: now },
         lead: {
-          ...(tenantId ? { tenantId } : {}),
           pipelineStage: { notIn: ["audit_booked", "client", "dead"] },
         },
       },
@@ -354,6 +451,35 @@ router.post("/followups/:id/mark", async (req, res) => {
       data: {
         leadId: q.leadId,
         action: `followup_${status}`,
+        payload: { followUpId: id, touchIndex: q.touchIndex },
+      },
+    });
+
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+/** Set a pending follow-up’s schedule to now so S4b / due poller picks it up immediately. */
+router.post("/followups/:id/bump", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const q = await prisma.followUpQueue.findUnique({ where: { id } });
+    if (!q) return res.status(404).json({ ok: false, error: "Follow-up not found" });
+    if (q.status !== "pending") {
+      return res.status(400).json({ ok: false, error: "Only pending follow-ups can be bumped" });
+    }
+
+    await prisma.followUpQueue.update({
+      where: { id },
+      data: { scheduledFor: new Date() },
+    });
+
+    await prisma.activityLog.create({
+      data: {
+        leadId: q.leadId,
+        action: "followup_bumped",
         payload: { followUpId: id, touchIndex: q.touchIndex },
       },
     });
@@ -458,6 +584,209 @@ router.post("/calendly-event", async (req, res) => {
   }
 });
 
+const ManualNoShowSchema = z.object({
+  note: z.string().max(2000).optional(),
+});
+
+/**
+ * Dashboard — record a no-show when Cal.com did not send `no_show` (host forgot, event auto-completed, etc.).
+ * Same pipeline + activity outcome as webhook no_show.
+ */
+router.post("/leads/:leadId/mark-no-show", async (req, res) => {
+  try {
+    const { leadId } = req.params;
+    const body = ManualNoShowSchema.parse(req.body ?? {});
+    const tenantId = getTenantId(req.headers as Record<string, unknown>);
+
+    const lead = await findLeadVisibleToTenant(leadId, tenantId);
+    if (!lead) return res.status(404).json({ ok: false, error: "Lead not found" });
+
+    if (lead.pipelineStage === "no_show") {
+      return res.json({ ok: true, leadId: lead.id, pipelineStage: "no_show", already: true });
+    }
+    if (lead.pipelineStage === "dead" || lead.pipelineStage === "client" || lead.pipelineStage === "closed") {
+      return res.status(400).json({ ok: false, error: "Cannot mark no-show for client, closed or dead leads" });
+    }
+
+    const fromStage = lead.pipelineStage;
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: {
+        pipelineStage: "no_show",
+        lastContactDate: new Date(),
+      },
+    });
+    await prisma.stageTransition.create({
+      data: { leadId: lead.id, fromStage, toStage: "no_show" },
+    });
+    await prisma.activityLog.create({
+      data: {
+        leadId: lead.id,
+        action: "no_show",
+        payload: {
+          manual: true,
+          source: "dashboard",
+          note: body.note ?? null,
+        },
+      },
+    });
+
+    return res.json({ ok: true, leadId: lead.id, pipelineStage: "no_show" });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+const ManualClosedSchema = z.object({
+  note: z.string().max(2000).optional(),
+});
+
+/**
+ * Dashboard — record a closed deal when a booked call results in a successful sale.
+ */
+router.post("/leads/:leadId/mark-closed", async (req, res) => {
+  try {
+    const { leadId } = req.params;
+    const body = ManualClosedSchema.parse(req.body ?? {});
+    const tenantId = getTenantId(req.headers as Record<string, unknown>);
+
+    const lead = await findLeadVisibleToTenant(leadId, tenantId);
+    if (!lead) return res.status(404).json({ ok: false, error: "Lead not found" });
+
+    if (lead.pipelineStage === "closed") {
+      return res.json({ ok: true, leadId: lead.id, pipelineStage: "closed", already: true });
+    }
+
+    const fromStage = lead.pipelineStage;
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: {
+        pipelineStage: "closed",
+        lastContactDate: new Date(),
+      },
+    });
+    await prisma.stageTransition.create({
+      data: { leadId: lead.id, fromStage, toStage: "closed" },
+    });
+    await prisma.activityLog.create({
+      data: {
+        leadId: lead.id,
+        action: "closed",
+        payload: {
+          manual: true,
+          source: "dashboard",
+          note: body.note ?? null,
+        },
+      },
+    });
+
+    return res.json({ ok: true, leadId: lead.id, pipelineStage: "closed" });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+/** All pending touches (optionally only overdue). Same lead stage rules as due-followups. */
+router.get("/follow-up-queue", async (req, res) => {
+  try {
+    const now = new Date();
+    const dueOnly =
+      req.query.dueOnly === "1" || String(req.query.dueOnly).toLowerCase() === "true";
+    const channelRaw = typeof req.query.channel === "string" ? req.query.channel.trim().toLowerCase() : "";
+    const channelQ = channelRaw === "email" || channelRaw === "whatsapp" ? channelRaw : null;
+    const qSearch = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    const limit = Math.min(Math.max(Number(req.query.limit ?? 200), 1), 500);
+
+    const leadSearch =
+      qSearch.length > 0
+        ? {
+            OR: [
+              { phone: { contains: qSearch } },
+              { name: { contains: qSearch, mode: "insensitive" as const } },
+              { email: { contains: qSearch, mode: "insensitive" as const } },
+            ],
+          }
+        : undefined;
+
+    const items = await prisma.followUpQueue.findMany({
+      where: {
+        status: "pending",
+        ...(dueOnly ? { scheduledFor: { lte: now } } : {}),
+        ...(channelQ ? { channel: channelQ } : {}),
+        lead: {
+          pipelineStage: { notIn: ["audit_booked", "client", "dead"] },
+          ...(leadSearch ?? {}),
+        },
+      },
+      include: { lead: true },
+      orderBy: { scheduledFor: "asc" },
+      take: limit,
+    });
+
+    return res.json({
+      ok: true,
+      items: items.map((q: (typeof items)[number]) => ({
+        followUpId: q.id,
+        leadId: q.leadId,
+        touchIndex: q.touchIndex,
+        channel: q.channel,
+        scheduledFor: q.scheduledFor,
+        isDue: q.scheduledFor <= now,
+        lead: {
+          id: q.lead.id,
+          name: q.lead.name,
+          phone: q.lead.phone,
+          email: q.lead.email,
+          pipelineStage: q.lead.pipelineStage,
+        },
+      })),
+    });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+/** Cal.com / booking webhook outcomes for the dashboard (activity feed). */
+router.get("/booking-events", async (req, res) => {
+  try {
+    const tenantId = getTenantId(req.headers as Record<string, unknown>);
+    const limit = Math.min(Math.max(Number(req.query.limit ?? 80), 1), 200);
+
+    const logs = await prisma.activityLog.findMany({
+      where: {
+        action: { in: ["booked", "booking_canceled", "no_show"] },
+        ...(tenantId ? { lead: { tenantId } } : {}),
+      },
+      include: {
+        lead: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            pipelineStage: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+    });
+
+    return res.json({
+      ok: true,
+      items: logs.map((log: (typeof logs)[number]) => ({
+        id: log.id,
+        action: log.action,
+        createdAt: log.createdAt,
+        payload: log.payload,
+        lead: log.lead,
+      })),
+    });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
 router.get("/leads/by-email", async (req, res) => {
   try {
     const raw = req.query.email;
@@ -466,10 +795,12 @@ router.get("/leads/by-email", async (req, res) => {
     if (!email) return res.status(400).json({ ok: false, error: "email query param required" });
     const tenantId = getTenantId(req.headers as Record<string, unknown>);
 
-    const lead = await prisma.lead.findFirst({
-      where: { email, ...(tenantId ? { tenantId } : {}) },
+    const candidates = await prisma.lead.findMany({
+      where: { email },
       orderBy: { updatedAt: "desc" },
+      take: 25,
     });
+    const lead = candidates.find((l) => !leadFailsTenantGate(l, tenantId)) ?? null;
     if (!lead) return res.status(404).json({ ok: false, error: "No lead found with that email" });
 
     const recentMessages = await prisma.messageLog.findMany({
@@ -516,9 +847,7 @@ router.post("/leads/:leadId/pause-followups", async (req, res) => {
     const tenantId = getTenantId(req.headers as Record<string, unknown>);
     const resumeAfterDays = Number(req.body?.resumeAfterDays ?? 0);
 
-    const lead = await prisma.lead.findFirst({
-      where: { id: leadId, ...(tenantId ? { tenantId } : {}) },
-    });
+    const lead = await findLeadVisibleToTenant(leadId, tenantId);
     if (!lead) return res.status(404).json({ ok: false, error: "Lead not found" });
 
     if (resumeAfterDays > 0) {
@@ -569,19 +898,21 @@ router.post("/leads/:leadId/update-priority", async (req, res) => {
     const body = UpdatePrioritySchema.parse(req.body ?? {});
     const tenantId = getTenantId(req.headers as Record<string, unknown>);
 
-    const lead = await prisma.lead.findFirst({
-      where: { id: leadId, ...(tenantId ? { tenantId } : {}) },
-    });
+    const lead = await findLeadVisibleToTenant(leadId, tenantId);
     if (!lead) return res.status(404).json({ ok: false, error: "Lead not found" });
 
     const data: Record<string, unknown> = {};
     if (body.score !== undefined) data.leadScore = body.score;
     if (body.reason) data.scoreReason = body.reason;
-    if (body.pipelineStage) {
+    if (body.pipelineStage && body.pipelineStage !== lead.pipelineStage) {
       data.pipelineStage = body.pipelineStage;
       await prisma.stageTransition.create({
         data: { leadId: lead.id, fromStage: lead.pipelineStage, toStage: body.pipelineStage },
       });
+    }
+
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ ok: false, error: "No fields to update" });
     }
 
     const updated = await prisma.lead.update({ where: { id: lead.id }, data });
@@ -600,20 +931,252 @@ router.post("/leads/:leadId/update-priority", async (req, res) => {
   }
 });
 
-// Dashboard / CRM-style list (paginated)
+/** Single lead + recent related rows (dashboard / CRM detail drawer). */
+router.get("/leads/:leadId", async (req, res) => {
+  try {
+    const leadId = normalizedLeadIdParam(req.params.leadId);
+    if (!leadId) {
+      return res.status(400).json({ ok: false, error: "Missing lead id" });
+    }
+    const tenantId = getTenantId(req.headers as Record<string, unknown>);
+
+    const lead = await prisma.lead.findUnique({
+      where: { id: leadId },
+      include: {
+        activityLogs: { orderBy: { createdAt: "desc" }, take: 50 },
+        messageLogs: { orderBy: { sentAt: "desc" }, take: 40 },
+        stageTransitions: { orderBy: { at: "desc" }, take: 40 },
+        followUpQueue: { orderBy: { scheduledFor: "desc" }, take: 30 },
+        conversationContexts: { orderBy: { createdAt: "desc" }, take: 30 },
+      },
+    });
+
+    if (!lead) return res.status(404).json({ ok: false, error: "Lead not found" });
+
+    if (leadFailsTenantGate(lead, tenantId)) {
+      return res.status(404).json({ ok: false, error: "Lead not found" });
+    }
+
+    const { activityLogs, messageLogs, stageTransitions, followUpQueue, conversationContexts, ...rest } = lead;
+    return res.json({
+      ok: true,
+      lead: rest,
+      activityLogs,
+      messageLogs,
+      stageTransitions,
+      followUpQueue,
+      conversationContexts,
+      /** Convenience for S4b: same as conversationContexts[0] when sorted desc. */
+      latestConversation: conversationContexts[0] ?? null,
+    });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+const ConversationContextInSchema = z.object({
+  summary: z.string().min(1).max(20000),
+  topics: z.record(z.unknown()).optional(),
+  rawExcerpt: z.string().max(8000).optional(),
+  channel: z.string().optional().default("email"),
+  s11Action: z.string().max(128).optional(),
+  externalMessageId: z.string().max(512).optional(),
+});
+
+/**
+ * n8n S11 — persist inbound-reply understanding for S4b personalization.
+ * Call once per parsed inbound email (all routes: reply sent, priority-only, reschedule, etc.) when you have a summary.
+ * Requires x-internal-secret when INTERNAL_AUTOMATION_SECRET is set.
+ */
+router.post("/leads/:leadId/conversation-context", async (req, res) => {
+  try {
+    if (!internalSecretOk(req)) {
+      return res.status(401).json({ ok: false, error: "Unauthorized" });
+    }
+    const { leadId } = req.params;
+    const tenantId = getTenantId(req.headers as Record<string, unknown>);
+    const body = ConversationContextInSchema.parse(req.body ?? {});
+
+    const lead = await findLeadVisibleToTenant(leadId, tenantId);
+    if (!lead) return res.status(404).json({ ok: false, error: "Lead not found" });
+
+    const row = await prisma.leadConversationContext.create({
+      data: {
+        leadId: lead.id,
+        summary: body.summary,
+        topics: body.topics === undefined ? undefined : (body.topics as object),
+        rawExcerpt: body.rawExcerpt ?? null,
+        channel: body.channel,
+        s11Action: body.s11Action ?? null,
+        externalMessageId: body.externalMessageId ?? null,
+      },
+    });
+
+    await prisma.activityLog.create({
+      data: {
+        leadId: lead.id,
+        action: "conversation_context_stored",
+        payload: {
+          contextId: row.id,
+          s11Action: body.s11Action ?? null,
+          channel: body.channel,
+        },
+      },
+    });
+
+    return res.status(201).json({ ok: true, id: row.id, leadId: lead.id });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+function buildLeadsListWhere(req: {
+  query: Record<string, unknown>;
+  headers: Record<string, unknown>;
+}): Prisma.LeadWhereInput {
+  const tenantId = getTenantId(req.headers);
+  const stage = typeof req.query.stage === "string" && req.query.stage.length > 0 ? req.query.stage : undefined;
+  const channelRaw = typeof req.query.channel === "string" ? req.query.channel.trim().toLowerCase() : "";
+  const channel =
+    channelRaw === "facebook" ||
+    channelRaw === "web" ||
+    channelRaw === "whatsapp" ||
+    channelRaw === "linkedin"
+      ? channelRaw
+      : undefined;
+  const qSearch = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  const minScoreRaw = req.query.minScore;
+  const maxScoreRaw = req.query.maxScore;
+  const minScore =
+    minScoreRaw !== undefined && minScoreRaw !== "" && !Number.isNaN(Number(minScoreRaw))
+      ? Number(minScoreRaw)
+      : undefined;
+  const maxScore =
+    maxScoreRaw !== undefined && maxScoreRaw !== "" && !Number.isNaN(Number(maxScoreRaw))
+      ? Number(maxScoreRaw)
+      : undefined;
+
+  const leadSearch =
+    qSearch.length > 0
+      ? {
+          OR: [
+            { phone: { contains: qSearch } },
+            { name: { contains: qSearch, mode: "insensitive" as const } },
+            { email: { contains: qSearch, mode: "insensitive" as const } },
+          ],
+        }
+      : undefined;
+
+  const scoreFilter =
+    minScore !== undefined || maxScore !== undefined
+      ? {
+          leadScore: {
+            ...(minScore !== undefined ? { gte: minScore } : {}),
+            ...(maxScore !== undefined ? { lte: maxScore } : {}),
+          },
+        }
+      : {};
+
+  return {
+    ...(tenantId ? { tenantId } : {}),
+    ...(stage ? { pipelineStage: stage } : {}),
+    ...(channel ? { channel } : {}),
+    ...(leadSearch ?? {}),
+    ...scoreFilter,
+  };
+}
+
+const ManualLeadCreateSchema = z.object({
+  phone: z.string().min(1, "Phone is required"),
+  name: z.string().optional(),
+  email: z.string().email().optional().or(z.literal("")),
+  channel: z.enum(CHANNELS).optional().default("web"),
+  source: z.string().optional(),
+  leadType: z.string().optional(),
+  budget: z.string().optional(),
+  timeline: z.string().optional(),
+  whatsappOptIn: z.boolean().optional(),
+  /** Optional note stored on the lead profile at creation time */
+  notes: z.string().max(4000).optional(),
+});
+
+/** Dashboard: add a new lead to the pipeline (same dedupe + ingest path as webhooks). */
+router.post("/leads", async (req, res) => {
+  try {
+    const body = ManualLeadCreateSchema.parse(req.body ?? {});
+    const tenantId = getTenantId(req.headers as Record<string, unknown>);
+
+    const normalized = {
+      ...normalizeWebhook({
+        phone: body.phone,
+        name: body.name,
+        email: body.email || undefined,
+        source: body.source?.trim() || "dashboard_manual",
+        leadType: body.leadType,
+        budget: body.budget,
+        timeline: body.timeline,
+      }),
+      channel: body.channel,
+      whatsappOptIn: body.whatsappOptIn,
+    };
+    NormalizedLeadSchema.parse(normalized);
+
+    const ingestSource =
+      body.channel === "facebook"
+        ? "facebook"
+        : body.channel === "whatsapp"
+          ? "whatsapp"
+          : body.channel === "linkedin"
+            ? "linkedin"
+            : "web";
+
+    const result = await ingestLead(normalized, tenantId, ingestSource);
+
+    if (body.notes?.trim()) {
+      await prisma.activityLog.create({
+        data: {
+          leadId: result.leadId,
+          action: "dashboard_note",
+          payload: { text: body.notes.trim(), createdWithLead: true },
+        },
+      });
+    }
+
+    await prisma.activityLog.create({
+      data: {
+        leadId: result.leadId,
+        action: "lead_created_manual",
+        payload: { source: "dashboard", deduplicated: result.deduplicated },
+      },
+    });
+
+    return res.status(result.deduplicated ? 200 : 201).json({
+      ok: true,
+      leadId: result.leadId,
+      deduplicated: result.deduplicated,
+      pipelineStage: result.pipelineStage,
+    });
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ ok: false, error: "Validation failed", details: err.flatten() });
+    }
+    return res.status(400).json({ ok: false, error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+// Dashboard / CRM-style list (paginated, filterable)
 router.get("/leads", async (req, res) => {
   try {
-    const tenantId = getTenantId(req.headers as Record<string, unknown>);
-    const stage = typeof req.query.stage === "string" && req.query.stage.length > 0 ? req.query.stage : undefined;
+    const where = buildLeadsListWhere({
+      query: req.query as Record<string, unknown>,
+      headers: req.headers as Record<string, unknown>,
+    });
     const limit = Math.min(Math.max(Number(req.query.limit ?? 50), 1), 200);
     const offset = Math.max(Number(req.query.offset ?? 0), 0);
 
     const [items, total] = await Promise.all([
       prisma.lead.findMany({
-        where: {
-          ...(tenantId ? { tenantId } : {}),
-          ...(stage ? { pipelineStage: stage } : {}),
-        },
+        where,
         orderBy: { updatedAt: "desc" },
         take: limit,
         skip: offset,
@@ -633,12 +1196,7 @@ router.get("/leads", async (req, res) => {
           lastContactDate: true,
         },
       }),
-      prisma.lead.count({
-        where: {
-          ...(tenantId ? { tenantId } : {}),
-          ...(stage ? { pipelineStage: stage } : {}),
-        },
-      }),
+      prisma.lead.count({ where }),
     ]);
 
     return res.json({
@@ -797,12 +1355,101 @@ router.get("/pipeline-stats", async (req, res) => {
   }
 });
 
-function internalSecretOk(req: { headers: Record<string, unknown> }): boolean {
-  const expected = process.env.INTERNAL_AUTOMATION_SECRET;
-  if (!expected || expected.length === 0) return true;
-  const got = req.headers["x-internal-secret"];
-  return typeof got === "string" && got === expected;
-}
+/** Rolling-window attribution & funnel stats (dashboard analytics section). */
+router.get("/analytics/attribution", async (req, res) => {
+  try {
+    const tenantId = getTenantId(req.headers as Record<string, unknown>);
+    const days = Math.min(Math.max(Number(req.query.days ?? 30), 1), 365);
+    const to = new Date();
+    const from = new Date(to.getTime() - days * 24 * 60 * 60 * 1000);
+    const tenantWhere = tenantId ? { tenantId } : {};
+    const tenantSql =
+      tenantId != null && tenantId !== ""
+        ? Prisma.sql`AND l."tenant_id" = ${tenantId}`
+        : Prisma.empty;
+
+    const [byChannel, byScore, topSources, leadsPerDay, bookingRows, totalNew, unscored] = await Promise.all([
+      prisma.lead.groupBy({
+        by: ["channel"],
+        where: { createdAt: { gte: from, lte: to }, ...tenantWhere },
+        _count: { _all: true },
+      }),
+      prisma.lead.groupBy({
+        by: ["leadScore"],
+        where: { createdAt: { gte: from, lte: to }, leadScore: { not: null }, ...tenantWhere },
+        _count: { _all: true },
+      }),
+      prisma.lead.groupBy({
+        by: ["source"],
+        where: { createdAt: { gte: from, lte: to }, source: { not: null }, ...tenantWhere },
+        _count: { _all: true },
+        orderBy: { _count: { source: "desc" } },
+        take: 14,
+      }),
+      prisma.$queryRaw<Array<{ d: Date; c: bigint }>>`
+        SELECT date_trunc('day', l."createdAt")::date AS d, COUNT(*)::bigint AS c
+        FROM "Lead" l
+        WHERE l."createdAt" >= ${from} AND l."createdAt" <= ${to}
+        ${tenantSql}
+        GROUP BY 1 ORDER BY 1 ASC
+      `,
+      prisma.$queryRaw<Array<{ channel: string; new_leads: bigint; booked_like: bigint }>>`
+        SELECT l."channel" AS channel,
+          COUNT(*)::bigint AS new_leads,
+          SUM(CASE WHEN l."pipeline_stage" IN ('audit_booked', 'client') THEN 1 ELSE 0 END)::bigint AS booked_like
+        FROM "Lead" l
+        WHERE l."createdAt" >= ${from} AND l."createdAt" <= ${to}
+        ${tenantSql}
+        GROUP BY l."channel" ORDER BY new_leads DESC
+      `,
+      prisma.lead.count({ where: { createdAt: { gte: from, lte: to }, ...tenantWhere } }),
+      prisma.lead.count({
+        where: { createdAt: { gte: from, lte: to }, leadScore: null, ...tenantWhere },
+      }),
+    ]);
+
+    const scoreMap = new Map<number, number>();
+    for (const row of byScore) {
+      if (row.leadScore != null) scoreMap.set(row.leadScore, row._count._all);
+    }
+    const scoreHistogram = Array.from({ length: 10 }, (_, i) => ({
+      score: i + 1,
+      count: scoreMap.get(i + 1) ?? 0,
+    }));
+
+    return res.json({
+      ok: true,
+      period: { from: from.toISOString(), to: to.toISOString(), days },
+      totalNewLeads: totalNew,
+      unscoredCount: unscored,
+      leadsByChannel: (byChannel as Array<{ channel: string; _count: { _all: number } }>).map((x) => ({
+        label: x.channel,
+        count: x._count._all,
+      })),
+      topUtmSources: (topSources as Array<{ source: string | null; _count: { _all: number } }>).map((x) => ({
+        source: x.source ?? "",
+        count: x._count._all,
+      })),
+      leadsPerDay: leadsPerDay.map((r) => ({
+        date: r.d.toISOString().slice(0, 10),
+        count: Number(r.c),
+      })),
+      scoreHistogram,
+      bookingRateByChannel: bookingRows.map((r) => {
+        const n = Number(r.new_leads);
+        const b = Number(r.booked_like);
+        return {
+          channel: r.channel,
+          newLeads: n,
+          bookedLike: b,
+          rate: n > 0 ? b / n : 0,
+        };
+      }),
+    });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err instanceof Error ? err.message : "Failed" });
+  }
+});
 
 const WeeklyReportUpsertSchema = z.object({
   weekStart: z.string().datetime(),
@@ -919,6 +1566,117 @@ router.post("/workflow-heartbeat", async (req, res) => {
   }
 });
 
+/** Unwrap n8n-shaped payloads and fix common mistakes (literal "=value" strings, "[object Object]" details). */
+function stripLeadingExpressionMarkers(value: string): string {
+  let s = value.trim();
+  while (s.startsWith("=")) s = s.slice(1).trim();
+  return s;
+}
+
+function normalizeWorkflowEventBody(raw: unknown): Record<string, unknown> {
+  if (typeof raw === "string") {
+    const t = stripLeadingExpressionMarkers(raw);
+    if (!t) return {};
+    try {
+      return normalizeWorkflowEventBody(JSON.parse(t));
+    } catch {
+      return {};
+    }
+  }
+  if (raw === null || raw === undefined) return {};
+  if (Array.isArray(raw)) {
+    const first = raw[0];
+    if (first && typeof first === "object" && !Array.isArray(first)) {
+      return normalizeWorkflowEventBody(first);
+    }
+    return {};
+  }
+  if (typeof raw !== "object") return {};
+  const o = { ...(raw as Record<string, unknown>) };
+
+  if (typeof o.json === "object" && o.json !== null && !Array.isArray(o.json)) {
+    Object.assign(o, o.json as Record<string, unknown>);
+  }
+  if (typeof o.body === "string") {
+    const inner = stripLeadingExpressionMarkers(o.body);
+    if (inner) {
+      try {
+        const parsed = JSON.parse(inner) as unknown;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          Object.assign(o, parsed as Record<string, unknown>);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  if (typeof o.body === "object" && o.body !== null && !Array.isArray(o.body)) {
+    Object.assign(o, o.body as Record<string, unknown>);
+  }
+  if (typeof o.data === "object" && o.data !== null && !Array.isArray(o.data)) {
+    Object.assign(o, o.data as Record<string, unknown>);
+  }
+
+  if (o.status === undefined && typeof o.Status === "string") {
+    o.status = o.Status;
+    delete o.Status;
+  }
+
+  if (o.workflowName === undefined && typeof o.workflow === "object" && o.workflow !== null) {
+    const w = o.workflow as Record<string, unknown>;
+    if (typeof w.name === "string") o.workflowName = w.name;
+    if (typeof w.id === "string" && o.workflowKey === undefined) o.workflowKey = w.id;
+  }
+
+  if (o.errorMessage === undefined && typeof o.error === "object" && o.error !== null) {
+    const e = o.error as Record<string, unknown>;
+    if (typeof e.message === "string") o.errorMessage = e.message;
+  }
+
+  for (const key of ["status", "workflowName", "workflowKey", "errorMessage", "executionId"] as const) {
+    const v = o[key];
+    if (typeof v === "string") {
+      const s = stripLeadingExpressionMarkers(v);
+      if (s === "") delete o[key];
+      else o[key] = s;
+    }
+  }
+
+  if (o.details !== undefined) {
+    if (typeof o.details === "string") {
+      const d = stripLeadingExpressionMarkers(o.details);
+      if (d === "" || d === "[object Object]" || d.toLowerCase() === "=[object object]") {
+        delete o.details;
+      } else {
+        try {
+          const parsed = JSON.parse(d) as unknown;
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            o.details = parsed as Record<string, unknown>;
+          } else delete o.details;
+        } catch {
+          delete o.details;
+        }
+      }
+    } else if (typeof o.details === "object" && o.details !== null && !Array.isArray(o.details)) {
+      o.details = { ...(o.details as Record<string, unknown>) };
+    } else {
+      delete o.details;
+    }
+  }
+
+  if (o.status === undefined) {
+    if (typeof o.errorMessage === "string" && o.errorMessage.length > 0) {
+      o.status = "error";
+    }
+  } else if (typeof o.status === "string") {
+    const s = o.status.trim().toLowerCase();
+    if (s === "failed" || s === "failure") o.status = "error";
+    else if (s === "success") o.status = "ok";
+  }
+
+  return o;
+}
+
 /** n8n Error Trigger or unified reporter: one row per event (success or error), richer than bare heartbeat. */
 const WorkflowEventSchema = z
   .object({
@@ -934,29 +1692,98 @@ const WorkflowEventSchema = z
     message: "workflowKey or workflowName required",
   });
 
+async function persistWorkflowEventPayload(body: z.infer<typeof WorkflowEventSchema>) {
+  const key = (body.workflowKey ?? body.workflowName ?? "unknown").trim();
+  const parts = [
+    body.errorMessage,
+    body.executionId ? `exec:${body.executionId}` : null,
+    body.durationMs != null ? `${body.durationMs}ms` : null,
+    body.details && Object.keys(body.details).length > 0 ? JSON.stringify(body.details) : null,
+  ].filter((x): x is string => !!x);
+  return prisma.workflowHeartbeat.create({
+    data: {
+      workflowKey: key,
+      status: body.status,
+      message: parts.length > 0 ? parts.join(" | ") : null,
+    },
+  });
+}
+
+/**
+ * Same as POST /workflow-events but via query string — supports n8n HTTP Request nodes configured as GET.
+ * Required query: status=ok|error and workflowKey or workflowName. Optional: errorMessage, executionId, durationMs.
+ */
+router.get("/workflow-events", async (req, res) => {
+  try {
+    if (!internalSecretOk(req)) {
+      return res.status(401).json({ ok: false, error: "Unauthorized" });
+    }
+    let details: Record<string, unknown> | undefined;
+    if (typeof req.query.details === "string" && req.query.details.length > 0) {
+      try {
+        details = JSON.parse(req.query.details) as Record<string, unknown>;
+      } catch {
+        return res.status(400).json({ ok: false, error: "Invalid JSON in details query param" });
+      }
+    }
+    const raw = {
+      status: req.query.status,
+      workflowKey: req.query.workflowKey,
+      workflowName: req.query.workflowName,
+      errorMessage: req.query.errorMessage,
+      executionId: req.query.executionId,
+      durationMs:
+        typeof req.query.durationMs === "string" && req.query.durationMs.length > 0
+          ? Number(req.query.durationMs)
+          : undefined,
+      details,
+    };
+    const body = WorkflowEventSchema.parse(raw);
+    const row = await persistWorkflowEventPayload(body);
+    return res.status(201).json({ ok: true, id: row.id });
+  } catch (err) {
+    const msg =
+      err instanceof z.ZodError
+        ? err.issues.map((i) => i.message).join("; ")
+        : err instanceof Error
+          ? err.message
+          : "Failed";
+    return res.status(400).json({
+      ok: false,
+      error: msg,
+      hint: "Use ?status=error&workflowName=MyWorkflow&errorMessage=... or POST JSON to this path.",
+    });
+  }
+});
+
 router.post("/workflow-events", async (req, res) => {
   try {
     if (!internalSecretOk(req)) {
       return res.status(401).json({ ok: false, error: "Unauthorized" });
     }
-    const body = WorkflowEventSchema.parse(req.body ?? {});
-    const key = (body.workflowKey ?? body.workflowName ?? "unknown").trim();
-    const parts = [
-      body.errorMessage,
-      body.executionId ? `exec:${body.executionId}` : null,
-      body.durationMs != null ? `${body.durationMs}ms` : null,
-      body.details && Object.keys(body.details).length > 0 ? JSON.stringify(body.details) : null,
-    ].filter((x): x is string => !!x);
-    const row = await prisma.workflowHeartbeat.create({
-      data: {
-        workflowKey: key,
-        status: body.status,
-        message: parts.length > 0 ? parts.join(" | ") : null,
-      },
-    });
+    const normalized = normalizeWorkflowEventBody(req.body ?? {});
+    if (Object.keys(normalized).length === 0) {
+      return res.status(400).json({
+        ok: false,
+        error: "Empty or missing JSON body",
+        hint: 'Empty body often means n8n did not send JSON. Fix: (1) Body → JSON, use a single expression for the whole body: ={{ JSON.stringify({ status: $json.status, workflowName: $json.workflowName, errorMessage: $json.errorMessage, executionId: $json.executionId, details: $json.details }) }}. (2) Do not wrap expressions as "={{ }}" inside quoted JSON — that produces "=value" strings. (3) For details object, never use a string template on a bare object — use JSON.stringify in a Code node or the expression above.',
+      });
+    }
+    const body = WorkflowEventSchema.parse(normalized);
+    const row = await persistWorkflowEventPayload(body);
     return res.status(201).json({ ok: true, id: row.id });
   } catch (err) {
-    return res.status(400).json({ ok: false, error: err instanceof Error ? err.message : "Failed" });
+    const msg =
+      err instanceof z.ZodError
+        ? err.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")
+        : err instanceof Error
+          ? err.message
+          : "Failed";
+    return res.status(400).json({
+      ok: false,
+      error: msg,
+      hint: "Required: status (ok|error) and workflowKey or workflowName — or send errorMessage to default status to error. Unwrap: nested json/body and n8n workflow/error objects are accepted.",
+    });
   }
 });
 

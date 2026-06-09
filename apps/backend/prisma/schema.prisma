@@ -39,7 +39,7 @@ model Lead {
 
   // State
   followUpCount   Int       @default(0) @map("follow_up_count")
-  pipelineStage   String    @default("new") @map("pipeline_stage") // new | contacted | warm | hot | audit_booked | no_show | client | dead | nurture
+  pipelineStage   String    @default("new") @map("pipeline_stage") // new | contacted | nurture | booked | no_show | closed | dead
   lastContactDate DateTime? @map("last_contact_date")
 
   // Compliance (Kenya DPA 2019, WhatsApp opt-in)
@@ -54,10 +54,11 @@ model Lead {
   @@index([pipelineStage])
 
   // Relations
-  activityLogs    ActivityLog[]
-  messageLogs     MessageLog[]
-  followUpQueue   FollowUpQueue[]
+  activityLogs     ActivityLog[]
+  messageLogs      MessageLog[]
+  followUpQueue    FollowUpQueue[]
   stageTransitions StageTransition[]
+  conversationContexts LeadConversationContext[]
 }
 
 // --- Stage transition timestamps (audit) ---
@@ -131,4 +132,89 @@ model FollowUpQueue {
   sentAt     DateTime? @map("sent_at")
   status     String   @default("pending")   // pending | sent | skipped | aborted
   createdAt  DateTime @default(now()) @map("created_at")
+}
+
+// Append-only inbound reply context for S4b (S11 + future channels). Latest row = most recent lead understanding.
+model LeadConversationContext {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now()) @map("created_at")
+
+  leadId String @map("lead_id")
+  lead   Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  summary    String  @db.Text
+  topics     Json?
+  rawExcerpt String? @map("raw_excerpt") @db.Text
+  channel    String  @default("email")
+  s11Action  String? @map("s11_action")
+  externalMessageId String? @map("external_message_id")
+
+  @@index([leadId, createdAt])
+  @@map("lead_conversation_contexts")
+}
+
+// --- Dashboard staff (admin UI, Laravel-style roles) ---
+model StaffRole {
+  id          String   @id @default(cuid())
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  key         String   @unique
+  label       String
+  permissions String[] @default([])
+  permissionCatalogVersion Int @default(1) @map("permission_catalog_version")
+  isSystem     Boolean  @default(false) @map("is_system")
+  users        StaffUser[]
+
+  @@map("staff_roles")
+}
+
+model StaffUser {
+  id           String   @id @default(cuid())
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  name         String?
+  isActive     Boolean  @default(true) @map("is_active")
+  mustChangePassword Boolean @default(false) @map("must_change_password")
+  
+  // Password change limits
+  passwordChangeCount Int     @default(0) @map("password_change_count")
+  isPasswordLocked    Boolean @default(false) @map("is_password_locked")
+
+  roleId       String   @map("role_id")
+  role         StaffRole @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  passwordHistories   PasswordHistory[]
+  passwordResetTokens PasswordResetToken[]
+
+  @@index([roleId])
+  @@map("staff_users")
+}
+
+// --- Password History (to track changes and enforce limits) ---
+model PasswordHistory {
+  id           String   @id @default(cuid())
+  createdAt    DateTime @default(now()) @map("created_at")
+  userId       String   @map("user_id")
+  user         StaffUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  passwordHash String   @map("password_hash") // To prevent reuse if needed, or just for audit
+
+  @@index([userId])
+  @@map("password_histories")
+}
+
+// --- Password Reset Tokens ---
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now()) @map("created_at")
+  expiresAt DateTime @map("expires_at")
+  token     String   @unique
+  userId    String   @map("user_id")
+  user      StaffUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  usedAt    DateTime? @map("used_at")
+
+  @@index([userId])
+  @@index([token])
+  @@map("password_reset_tokens")
 }

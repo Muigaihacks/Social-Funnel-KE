@@ -99,15 +99,23 @@ export function LiveFeedView() {
 
   return (
     <div className="mx-auto max-w-4xl pb-24">
-      <header className="mb-8 border-b border-white/10 pb-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-white md:text-3xl">Live funnel</h1>
-        <p className="mt-2 max-w-2xl text-sm text-white/55">
-          Cohort view by <code className="rounded bg-white/10 px-1 text-xs">pipeline_stage</code> — counts
+      <header className="mb-8 border-b border-[var(--card-border)] pb-6">
+        <div className="flex items-center gap-3 mb-2">
+          <span className="flex h-6 w-6 items-center justify-center rounded bg-gradient-to-br from-[var(--sf-teal)] to-emerald-600 text-xs shadow-inner">
+            📊
+          </span>
+          <span className="text-xs font-bold uppercase tracking-widest text-[var(--sf-teal)]">
+            Acquisition OS Business Intelligence Hub
+          </span>
+        </div>
+        <h1 className="text-2xl font-semibold tracking-tight text-[var(--foreground)] md:text-3xl">Live funnel</h1>
+        <p className="mt-2 max-w-2xl text-sm text-[var(--text-muted)]">
+          Cohort view by <code className="rounded bg-[var(--chart-grid)] px-1 text-xs">pipeline_stage</code> — counts
           refresh every {POLL_MS / 1000}s. Tap a stage to list who is there now. Formal stage buckets + branch
           metrics (booked vs nurture) and anomaly rules will land after product sign-off; this page shape stays the
           same.
         </p>
-        <p className="mt-3 font-mono text-xs text-white/40">
+        <p className="mt-3 font-mono text-xs text-[var(--text-dim)]">
           {loading
             ? "Loading…"
             : summary
@@ -122,16 +130,16 @@ export function LiveFeedView() {
           role="alert"
         >
           <p className="font-medium text-semantic-warning">Feed offline</p>
-          <p className="mt-1 text-white/70">{error}</p>
+          <p className="mt-1 text-[var(--text-muted)]">{error}</p>
         </div>
       ) : null}
 
       <section className="mb-10" aria-label="Stage counts">
-        <h2 className="mb-4 text-xs font-semibold uppercase tracking-wider text-white/40">Stages (snapshot)</h2>
+        <h2 className="mb-4 text-xs font-semibold uppercase tracking-wider text-[var(--text-dim)]">Stages (snapshot)</h2>
         {loading && !summary ? (
-          <p className="text-sm text-white/40">Loading stage distribution…</p>
+          <p className="text-sm text-[var(--text-dim)]">Loading stage distribution…</p>
         ) : sortedStages.length === 0 ? (
-          <p className="text-sm text-white/45">No leads in database yet.</p>
+          <p className="text-sm text-[var(--text-dim)]">No leads in database yet.</p>
         ) : (
           <ul className="space-y-4">
             {sortedStages.map((row) => {
@@ -146,24 +154,24 @@ export function LiveFeedView() {
                       "group w-full rounded-2xl border px-4 py-3 text-left transition-colors",
                       active
                         ? "border-sf-teal/50 bg-sf-teal/10"
-                        : "border-white/10 bg-sf-navy-deep/50 hover:border-white/20",
+                        : "border-[var(--card-border)] bg-[var(--card-surface)] hover:border-[var(--card-border)]",
                     ].join(" ")}
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-sm font-medium capitalize text-white">
+                      <span className="text-sm font-medium capitalize text-[var(--foreground)]">
                         {row.stage.replace(/_/g, " ")}
                       </span>
                       <span className="font-mono text-lg font-semibold tabular-nums text-sf-teal">
                         {row.count}
                       </span>
                     </div>
-                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
+                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-[var(--chart-grid)]">
                       <div
                         className="funnel-live-bar h-full rounded-full bg-gradient-to-r from-sf-teal to-sf-brand transition-[width] duration-700 ease-out"
                         style={{ width: `${widthPct}%` }}
                       />
                     </div>
-                    <p className="mt-2 text-[10px] text-white/35">
+                    <p className="mt-2 text-[10px] text-[var(--text-faint)]">
                       {active ? "Click again to collapse" : "Click for leads in this stage"}
                     </p>
                   </button>
@@ -175,24 +183,24 @@ export function LiveFeedView() {
       </section>
 
       {selectedStage ? (
-        <section className="mb-10 rounded-2xl border border-white/10 bg-sf-navy-deep/40 p-4 md:p-5" aria-label="Leads in stage">
+        <section className="mb-10 rounded-2xl border border-[var(--card-border)] bg-[var(--card-surface)] p-4 md:p-5" aria-label="Leads in stage">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-white/40">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--text-dim)]">
               In stage: <span className="text-sf-teal">{selectedStage.replace(/_/g, " ")}</span>
             </h2>
-            {leadsLoading ? <span className="text-xs text-white/45">Loading…</span> : null}
+            {leadsLoading ? <span className="text-xs text-[var(--text-dim)]">Loading…</span> : null}
           </div>
           <ul className="max-h-80 space-y-2 overflow-y-auto">
             {leads.length === 0 && !leadsLoading ? (
-              <li className="text-sm text-white/45">No rows returned.</li>
+              <li className="text-sm text-[var(--text-dim)]">No rows returned.</li>
             ) : null}
             {leads.map((l) => (
               <li
                 key={l.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/5 bg-white/5 px-3 py-2"
+                className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--chart-grid)] bg-[var(--row-bg)] px-3 py-2"
               >
-                <span className="text-sm text-white">{l.name?.trim() || "Unnamed"}</span>
-                <span className="text-xs text-white/45">
+                <span className="text-sm text-[var(--foreground)]">{l.name?.trim() || "Unnamed"}</span>
+                <span className="text-xs text-[var(--text-dim)]">
                   {maskPhone(l.phone)} · {l.channel}
                   {l.leadScore != null ? ` · ${l.leadScore}/10` : ""}
                 </span>
@@ -203,11 +211,11 @@ export function LiveFeedView() {
       ) : null}
 
       <section
-        className="rounded-2xl border border-dashed border-white/15 bg-sf-navy-deep/30 px-4 py-6 md:px-6"
+        className="rounded-2xl border border-dashed border-[var(--card-border)] bg-[var(--row-bg)] px-4 py-6 md:px-6"
         aria-label="Funnel health"
       >
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-white/40">Funnel health monitor</h2>
-        <p className="mt-2 text-sm text-white/50">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--text-dim)]">Funnel health monitor</h2>
+        <p className="mt-2 text-sm text-[var(--text-dim)]">
           Rule-based anomalies (conversion drops, no-show rate vs threshold, etc.) will appear here after you lock
           stages and thresholds with Lewis. Polling-friendly — lead stages rarely change by the second.
         </p>
@@ -227,17 +235,17 @@ export function LiveFeedView() {
             ))}
           </ul>
         ) : (
-          <p className="mt-4 text-center text-sm text-white/35">No anomalies flagged — rules not configured yet.</p>
+          <p className="mt-4 text-center text-sm text-[var(--text-faint)]">No anomalies flagged — rules not configured yet.</p>
         )}
       </section>
 
       {summary?.note ? (
-        <p className="mt-6 text-center text-xs text-white/35" title="API note">
+        <p className="mt-6 text-center text-xs text-[var(--text-faint)]" title="API note">
           API: {summary.note}
         </p>
       ) : null}
 
-      <p className="mt-8 text-center text-sm text-white/40">
+      <p className="mt-8 text-center text-sm text-[var(--text-dim)]">
         Command Centre ·{" "}
         <Link href="/" className="text-sf-teal hover:underline">
           Overview
