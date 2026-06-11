@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { SiteHeader } from "@/components/SiteHeader";
+import { ConditionalSiteHeader } from "@/components/ConditionalSiteHeader";
+import { ThemeProvider } from "@/components/ThemeProvider";
 
 export const metadata: Metadata = {
   title: "Acquisition OS — Social Funnel",
@@ -16,10 +17,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body className="min-h-screen antialiased font-sans">
-        <SiteHeader />
-        <div className="pt-[7.25rem] md:pt-[5.5rem]">{children}</div>
+        <ThemeProvider>
+          <ConditionalSiteHeader />
+          <div className="pt-[7.25rem] md:pt-[5.5rem]">{children}</div>
+        </ThemeProvider>
       </body>
     </html>
   );

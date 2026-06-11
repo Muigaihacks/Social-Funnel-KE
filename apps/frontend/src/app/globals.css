@@ -3,6 +3,36 @@
 @tailwind utilities;
 
 :root {
+  /* Light mode variables */
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --sf-teal: #0d9488;
+  --sf-navy-deep: #e2e8f0;
+  --sf-sky: #0284c7;
+  --sf-brand: #4f46e5;
+  --sf-off: #ffffff;
+  
+  --card-surface: #ffffff;
+  --card-border: #e2e8f0;
+  --nav-surface: rgba(255, 255, 255, 0.85);
+  --input-bg: #f8fafc;
+  --row-bg: #f1f5f9;
+  --row-bg-hover: #e2e8f0;
+  --chart-grid: #cbd5e1;
+  --text-muted: #64748b;
+  --text-dim: #475569;
+  --text-soft: #334155;
+  --text-faint: #94a3b8;
+
+  --semantic-info: #3b82f6;
+  --semantic-success: #16a34a;
+  --semantic-hot: #ea580c;
+  --semantic-warning: #d97706;
+  --semantic-danger: #dc2626;
+}
+
+[data-theme="dark"] {
+  /* Dark mode variables */
   --background: #050810;
   --foreground: #f8fafc;
   --sf-teal: #00d1c1;
@@ -10,6 +40,19 @@
   --sf-sky: #38bdf8;
   --sf-brand: #6d8cff;
   --sf-off: #e2e8f0;
+  
+  --card-surface: rgba(13, 27, 42, 0.4);
+  --card-border: rgba(255, 255, 255, 0.1);
+  --nav-surface: rgba(13, 27, 42, 0.78);
+  --input-bg: rgba(255, 255, 255, 0.05);
+  --row-bg: rgba(255, 255, 255, 0.02);
+  --row-bg-hover: rgba(255, 255, 255, 0.04);
+  --chart-grid: rgba(255, 255, 255, 0.05);
+  --text-muted: rgba(255, 255, 255, 0.55);
+  --text-dim: rgba(255, 255, 255, 0.45);
+  --text-soft: rgba(255, 255, 255, 0.8);
+  --text-faint: rgba(255, 255, 255, 0.35);
+
   --semantic-info: #3b82f6;
   --semantic-success: #22c55e;
   --semantic-hot: #f97316;
