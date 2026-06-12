@@ -3,6 +3,9 @@ import { backendBaseUrl } from "./backend";
 export async function getJson<T>(path: string, revalidateSeconds = 15): Promise<T> {
   const base = backendBaseUrl();
   const res = await fetch(`${base}${path}`, {
+    headers: {
+      'ngrok-skip-browser-warning': '1',
+    },
     next: { revalidate: revalidateSeconds },
   });
   if (!res.ok) {
@@ -15,6 +18,9 @@ export async function getJson<T>(path: string, revalidateSeconds = 15): Promise<
 export async function getJsonNoStore<T>(path: string): Promise<T> {
   const base = backendBaseUrl();
   const res = await fetch(`${base}${path}`, {
+    headers: {
+      'ngrok-skip-browser-warning': '1',
+    },
     cache: "no-store",
   });
   if (!res.ok) {
