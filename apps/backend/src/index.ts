@@ -20,6 +20,7 @@ const allowedOrigins = [
   process.env.FRONTEND_URL,
   "http://localhost:3000",
   "http://127.0.0.1:3000",
+  "https://social-funnel-ke-dashboard.vercel.app", // Explicit Vercel domain
 ].filter(Boolean);
 
 app.use(cors({
@@ -27,12 +28,12 @@ app.use(cors({
     // Allow requests with no origin (mobile apps, curl, etc)
     if (!origin) return callback(null, true);
     
-    // Allow configured origins
-    if (allowedOrigins.some(allowed => origin.startsWith(allowed as string))) {
+    // Allow configured origins (exact match)
+    if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
     
-    // Allow Vercel deployments
+    // Allow any Vercel preview deployments
     if (origin.endsWith('.vercel.app')) {
       return callback(null, true);
     }
@@ -42,9 +43,13 @@ app.use(cors({
       return callback(null, true);
     }
     
+    // Log rejected origins for debugging
+    console.log('CORS blocked origin:', origin);
     callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning'],
 }));
 
 app.use(express.json());
