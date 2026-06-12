@@ -69,7 +69,10 @@ export function LiveFeedView() {
 
   const fetchSummary = useCallback(async () => {
     try {
-      const res = await fetch(`${apiBase()}/api/v1/automation/funnel-live?days=7`, { cache: "no-store" });
+      const res = await fetch(`${apiBase()}/api/v1/automation/funnel-live?days=7`, { 
+        cache: "no-store",
+        headers: { 'ngrok-skip-browser-warning': '1' }
+      });
       const body = (await res.json()) as FunnelLiveResponse & { error?: string };
       if (!res.ok || !body.ok) {
         throw new Error(typeof body.error === "string" ? body.error : `HTTP ${res.status}`);

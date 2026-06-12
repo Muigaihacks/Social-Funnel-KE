@@ -88,6 +88,7 @@ export default function FollowUpsPage() {
 
       const res = await fetch(`${apiBase()}/api/v1/automation/follow-up-queue?${params}`, {
         cache: "no-store",
+        headers: { 'ngrok-skip-browser-warning': '1' }
       });
       const body = (await res.json()) as FollowUpsResponse;
 
