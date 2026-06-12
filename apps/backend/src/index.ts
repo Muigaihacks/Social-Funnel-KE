@@ -27,11 +27,22 @@ app.use(cors({
     // Allow requests with no origin (mobile apps, curl, etc)
     if (!origin) return callback(null, true);
     
+    // Allow configured origins
     if (allowedOrigins.some(allowed => origin.startsWith(allowed as string))) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
+      return callback(null, true);
     }
+    
+    // Allow Vercel deployments
+    if (origin.endsWith('.vercel.app')) {
+      return callback(null, true);
+    }
+    
+    // Allow ngrok URLs
+    if (origin.includes('ngrok-free.dev') || origin.includes('ngrok.io')) {
+      return callback(null, true);
+    }
+    
+    callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
 }));
