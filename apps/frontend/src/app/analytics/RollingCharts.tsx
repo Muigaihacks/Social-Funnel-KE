@@ -121,7 +121,10 @@ export function RollingCharts({ data }: { data: AttributionPayload }) {
           <ul className="min-w-0 flex-1 space-y-1 text-sm">
             {utmSegments.map((s, i) => (
               <li key={s.source + i} className="flex justify-between gap-2">
-                <span className="truncate text-[var(--foreground)]">{s.source || "—"}</span>
+                <span className="flex items-center gap-2 truncate">
+                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: PALETTE[i % PALETTE.length] }} />
+                  <span className="text-[var(--foreground)]">{s.source || "—"}</span>
+                </span>
                 <span className="tabular-nums text-[var(--text-muted)]">{s.count}</span>
               </li>
             ))}
@@ -141,8 +144,8 @@ export function RollingCharts({ data }: { data: AttributionPayload }) {
           Booking proxy by channel
         </h3>
         <p className="mt-1 text-xs text-[var(--text-muted)]">
-          Share of new leads in window whose stage is <code className="text-[10px]">booked</code> or{" "}
-          <code className="text-[10px]">closed</code>.
+          Share of new leads in window whose stage is <code className="text-[10px]">audit_booked</code> or{" "}
+          <code className="text-[10px]">client</code>.
         </p>
         <div className="mt-4 space-y-3">
           {data.bookingRateByChannel.map((row) => (
@@ -171,19 +174,21 @@ export function RollingCharts({ data }: { data: AttributionPayload }) {
         <p className="mt-1 text-xs text-[var(--text-muted)]">
           Leads created in window. Unscored in period: {data.unscoredCount}.
         </p>
-        <div className="mt-4 flex h-40 items-end gap-2">
+        <div className="mt-4 flex h-40 items-end gap-1.5">
           {data.scoreHistogram.map((b) => {
             const maxC = Math.max(...data.scoreHistogram.map((x) => x.count), 1);
-            const h = (b.count / maxC) * 100;
+            const h = Math.max((b.count / maxC) * 100, b.count > 0 ? 4 : 0);
             return (
               <div key={b.score} className="flex flex-1 flex-col items-center gap-1">
+                <span className="text-[9px] tabular-nums text-[var(--text-faint)]">{b.count}</span>
                 <div className="flex w-full flex-1 items-end">
                   <div
-                    className="w-full min-h-[4px] rounded-t bg-[var(--sf-sky)] opacity-90"
-                    style={{ height: `${h}%` }}
+                    className="w-full rounded-t bg-gradient-to-t from-[var(--sf-sky)] to-[var(--sf-teal)] opacity-90"
+                    style={{ height: `${h}%`, minHeight: b.count > 0 ? '8px' : '0' }}
+                    title={`Score ${b.score}: ${b.count} leads`}
                   />
                 </div>
-                <span className="text-[10px] tabular-nums text-[var(--text-muted)]">{b.score}</span>
+                <span className="text-[10px] tabular-nums font-medium text-[var(--text-muted)]">{b.score}</span>
               </div>
             );
           })}

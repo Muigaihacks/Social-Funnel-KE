@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { sortStagesForDisplay } from "@/config/pipeline";
+import { FunnelCanvas } from "./FunnelCanvas";
 
 type FunnelLiveResponse = {
   ok: boolean;
@@ -11,6 +12,26 @@ type FunnelLiveResponse = {
   period: { from: string; to: string; days: number; mode: string };
   newLeadsInPeriod: number;
   stages: { stage: string; count: number }[];
+  metrics?: {
+    nurtureConversionRate: number;
+    nurturedLeads: number;
+    nurturedThenBooked: number;
+    touchpointBreakdown: Record<string, number>;
+    touchpointPercentages: Record<string, number>;
+    totalTouchpointBookings: number;
+    noShowRate: number;
+    totalBooked: number;
+    noShowCount: number;
+    scoreMovements: {
+      coldToWarm: number;
+      coldToHot: number;
+      warmToHot: number;
+      warmToCold: number;
+      hotToCold: number;
+      hotToWarm: number;
+    };
+    avgLeadsPerDay: number;
+  };
   anomalies: Array<{ id: string; severity: "warning" | "critical"; message: string }>;
 };
 
@@ -98,22 +119,20 @@ export function LiveFeedView() {
   }, [selectedStage, loadLeads]);
 
   return (
-    <div className="mx-auto max-w-4xl pb-24">
+    <div className="mx-auto max-w-7xl pb-24">
       <header className="mb-8 border-b border-[var(--card-border)] pb-6">
         <div className="flex items-center gap-3 mb-2">
           <span className="flex h-6 w-6 items-center justify-center rounded bg-gradient-to-br from-[var(--sf-teal)] to-emerald-600 text-xs shadow-inner">
-            🧠
+            📊
           </span>
           <span className="text-xs font-bold uppercase tracking-widest text-[var(--sf-teal)]">
             Acquisition OS Business Intelligence Hub
           </span>
         </div>
         <h1 className="text-2xl font-semibold tracking-tight text-[var(--foreground)] md:text-3xl">Live funnel</h1>
-        <p className="mt-2 max-w-2xl text-sm text-[var(--text-muted)]">
-          Cohort view by <code className="rounded bg-[var(--chart-grid)] px-1 text-xs">pipeline_stage</code> — counts
-          refresh every {POLL_MS / 1000}s. Tap a stage to list who is there now. Formal stage buckets + branch
-          metrics (booked vs nurture) and anomaly rules will land after product sign-off; this page shape stays the
-          same.
+        <p className="mt-2 max-w-3xl text-sm text-[var(--text-muted)]">
+          Real-time pipeline visualization showing lead flow through stages. Click any stage to view leads.
+          Counts refresh every {POLL_MS / 1000}s.
         </p>
         <p className="mt-3 font-mono text-xs text-[var(--text-dim)]">
           {loading
@@ -134,54 +153,24 @@ export function LiveFeedView() {
         </div>
       ) : null}
 
-      <section className="mb-10" aria-label="Stage counts">
-        <h2 className="mb-4 text-xs font-semibold uppercase tracking-wider text-[var(--text-dim)]">Pipeline Flow</h2>
+      <section className="mb-10" aria-label="Pipeline canvas">
+        <h2 className="mb-4 text-xs font-semibold uppercase tracking-wider text-[var(--text-dim)]">
+          Pipeline flow visualization
+        </h2>
         {loading && !summary ? (
-          <p className="text-sm text-[var(--text-dim)]">Loading stage distribution…</p>
-        ) : sortedStages.length === 0 ? (
-          <p className="text-sm text-[var(--text-dim)]">No leads in database yet.</p>
-        ) : (
-          <div className="flex flex-col md:flex-row gap-2">
-            {sortedStages.map((row, idx) => {
-              const active = selectedStage === row.stage;
-              const isLast = idx === sortedStages.length - 1;
-              return (
-                <div key={row.stage} className="flex-1 flex flex-col md:flex-row items-center">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedStage(active ? null : row.stage)}
-                    className={[
-                      "group relative w-full flex-1 flex flex-col items-center justify-center rounded-lg border px-2 py-4 text-center transition-all",
-                      active
-                        ? "border-sf-teal/50 bg-sf-teal/10 shadow-[0_0_15px_rgba(var(--sf-teal-rgb),0.15)]"
-                        : "border-[var(--card-border)] bg-[var(--card-surface)] hover:border-sf-teal/30 hover:bg-sf-teal/5",
-                    ].join(" ")}
-                  >
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] group-hover:text-[var(--foreground)] transition-colors">
-                      {row.stage.replace(/_/g, " ")}
-                    </span>
-                    <span className="mt-2 text-2xl font-semibold tabular-nums text-[var(--foreground)] group-hover:text-sf-teal transition-colors">
-                      {row.count}
-                    </span>
-                  </button>
-                  {!isLast && (
-                    <div className="hidden md:flex ml-2 items-center justify-center text-[var(--card-border)]">
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="m9 18 6-6-6-6"/>
-                      </svg>
-                    </div>
-                  )}
-                  {!isLast && (
-                    <div className="md:hidden my-2 flex items-center justify-center text-[var(--card-border)]">
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="m6 9 6 6 6-6"/>
-                      </svg>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+          <div className="flex h-96 items-center justify-center rounded-2xl border border-[var(--card-border)] bg-[#1a1a1a]">
+            <p className="text-sm text-[var(--text-dim)]">Loading pipeline…</p>
           </div>
+        ) : sortedStages.length === 0 ? (
+          <div className="flex h-96 items-center justify-center rounded-2xl border border-[var(--card-border)] bg-[#1a1a1a]">
+            <p className="text-sm text-[var(--text-dim)]">No leads in database yet.</p>
+          </div>
+        ) : (
+          <FunnelCanvas
+            stages={sortedStages}
+            selectedStage={selectedStage}
+            onSelectStage={setSelectedStage}
+          />
         )}
       </section>
 
@@ -213,14 +202,94 @@ export function LiveFeedView() {
         </section>
       ) : null}
 
+      {summary?.metrics && (
+        <>
+          <section className="mb-10 rounded-2xl border border-[var(--card-border)] bg-[var(--card-surface)] p-4 md:p-5" aria-label="Funnel metrics">
+            <h2 className="mb-4 text-xs font-semibold uppercase tracking-wider text-[var(--text-dim)]">Performance metrics</h2>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-xl border border-[var(--chart-grid)] bg-[var(--row-bg)] p-3">
+                <p className="text-xs text-[var(--text-muted)]">Avg leads/day</p>
+                <p className="text-2xl font-bold tabular-nums text-[var(--foreground)]">
+                  {summary.metrics.avgLeadsPerDay?.toFixed(1) ?? "0.0"}
+                </p>
+              </div>
+              <div className="rounded-xl border border-[var(--chart-grid)] bg-[var(--row-bg)] p-3">
+                <p className="text-xs text-[var(--text-muted)]">Nurture → Booking</p>
+                <p className="text-2xl font-bold tabular-nums text-[var(--foreground)]">
+                  {summary.metrics.nurtureConversionRate?.toFixed(1) ?? "0.0"}%
+                </p>
+                <p className="mt-1 text-[10px] text-[var(--text-faint)]">
+                  {summary.metrics.nurturedThenBooked ?? 0}/{summary.metrics.nurturedLeads ?? 0} leads
+                </p>
+              </div>
+              <div className="rounded-xl border border-[var(--chart-grid)] bg-[var(--row-bg)] p-3">
+                <p className="text-xs text-[var(--text-muted)]">No-show rate</p>
+                <p className="text-2xl font-bold tabular-nums text-[var(--foreground)]">
+                  {summary.metrics.noShowRate?.toFixed(1) ?? "0.0"}%
+                </p>
+                <p className="mt-1 text-[10px] text-[var(--text-faint)]">
+                  {summary.metrics.noShowCount ?? 0}/{summary.metrics.totalBooked ?? 0} bookings
+                </p>
+              </div>
+              <div className="rounded-xl border border-[var(--chart-grid)] bg-[var(--row-bg)] p-3">
+                <p className="text-xs text-[var(--text-muted)]">Score movements</p>
+                <p className="text-2xl font-bold tabular-nums text-[var(--foreground)]">
+                  {(summary.metrics.scoreMovements?.coldToWarm ?? 0) + (summary.metrics.scoreMovements?.coldToHot ?? 0) + (summary.metrics.scoreMovements?.warmToHot ?? 0)}
+                  <span className="text-sm text-semantic-success"> ↑</span> / 
+                  {(summary.metrics.scoreMovements?.hotToCold ?? 0) + (summary.metrics.scoreMovements?.hotToWarm ?? 0) + (summary.metrics.scoreMovements?.warmToCold ?? 0)}
+                  <span className="text-sm text-semantic-warning"> ↓</span>
+                </p>
+                <p className="mt-1 text-[10px] text-[var(--text-faint)]">upgrades / downgrades</p>
+              </div>
+            </div>
+          </section>
+
+          {summary.metrics.totalTouchpointBookings > 0 && (
+            <section className="mb-10 rounded-2xl border border-[var(--card-border)] bg-[var(--card-surface)] p-4 md:p-5" aria-label="Touchpoint analysis">
+              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-[var(--text-dim)]">Booking touchpoint breakdown</h2>
+              <p className="mb-4 text-xs text-[var(--text-muted)]">
+                At which touchpoint in the nurture sequence did leads book? Based on {summary.metrics.totalTouchpointBookings} tracked bookings.
+              </p>
+              <div className="space-y-3">
+                {Object.entries(summary.metrics.touchpointBreakdown)
+                  .sort(([a], [b]) => {
+                    const numA = parseInt(a.replace('touch', ''));
+                    const numB = parseInt(b.replace('touch', ''));
+                    return numA - numB;
+                  })
+                  .map(([touchpoint, count]) => {
+                    const percentage = summary.metrics!.touchpointPercentages[touchpoint] || 0;
+                    const touchNum = touchpoint.replace('touch', '');
+                    return (
+                      <div key={touchpoint}>
+                        <div className="mb-1 flex justify-between text-sm">
+                          <span className="text-[var(--foreground)]">Touch {touchNum}</span>
+                          <span className="tabular-nums text-[var(--text-muted)]">
+                            {percentage.toFixed(1)}% ({count} bookings)
+                          </span>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-[var(--chart-grid)]">
+                          <div
+                            className="h-full rounded-full bg-gradient-to-r from-[var(--sf-teal)] to-emerald-500"
+                            style={{ width: `${percentage}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            </section>
+          )}
+        </>
+      )}
+
       <section
         className="rounded-2xl border border-dashed border-[var(--card-border)] bg-[var(--row-bg)] px-4 py-6 md:px-6"
         aria-label="Funnel health"
       >
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--text-dim)]">Funnel health monitor</h2>
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--text-dim)]">Anomaly detection</h2>
         <p className="mt-2 text-sm text-[var(--text-dim)]">
-          Rule-based anomalies (conversion drops, no-show rate vs threshold, etc.) will appear here after you lock
-          stages and thresholds with Lewis. Polling-friendly — lead stages rarely change by the second.
+          Automated alerts for conversion drops, no-show rate spikes, and score downgrades.
         </p>
         {summary?.anomalies && summary.anomalies.length > 0 ? (
           <ul className="mt-4 space-y-2">
@@ -238,7 +307,7 @@ export function LiveFeedView() {
             ))}
           </ul>
         ) : (
-          <p className="mt-4 text-center text-sm text-[var(--text-faint)]">No anomalies flagged — rules not configured yet.</p>
+          <p className="mt-4 text-center text-sm text-[var(--text-faint)]">✓ No anomalies detected — all metrics within expected ranges</p>
         )}
       </section>
 

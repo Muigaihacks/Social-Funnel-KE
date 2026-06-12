@@ -33,7 +33,8 @@ export function SiteHeader() {
 
   return (
     <header className="pointer-events-none fixed left-0 right-0 top-0 z-50 flex justify-center px-3 pt-4 md:px-6">
-      <div className="pointer-events-auto flex w-full max-w-6xl flex-col items-stretch gap-2 rounded-[2rem] border border-[var(--card-border)] bg-[var(--nav-surface)] px-3 py-2 shadow-[0_8px_40px_rgba(0,0,0,0.45)] backdrop-blur-xl md:flex-row md:items-center md:gap-4 md:px-5 md:py-2.5">
+      <div className="nav-container pointer-events-auto relative flex w-full max-w-6xl flex-col items-stretch gap-2 rounded-[2rem] border border-[var(--card-border)] bg-[var(--nav-surface)] px-3 py-2 shadow-[0_8px_40px_rgba(0,0,0,0.45)] backdrop-blur-xl md:flex-row md:items-center md:gap-4 md:px-5 md:py-2.5">
+        
         <div className="flex items-center justify-between gap-3 md:justify-start">
           <Link href="/" className="flex items-center gap-2.5 shrink-0">
             <SocialFunnelLogoMark className="h-9 w-9 text-[var(--sf-teal)] md:h-10 md:w-10" />

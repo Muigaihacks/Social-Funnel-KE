@@ -241,7 +241,6 @@ export default async function LeadProfilesPage({ searchParams }: { searchParams:
                     <th className="px-4 py-3 font-medium whitespace-nowrap">Stage</th>
                     <th className="px-4 py-3 font-medium whitespace-nowrap">Score</th>
                     <th className="px-4 py-3 font-medium whitespace-nowrap">Channel</th>
-                    <th className="px-4 py-3 font-medium whitespace-nowrap text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--chart-grid)]">
@@ -255,12 +254,12 @@ export default async function LeadProfilesPage({ searchParams }: { searchParams:
                     </tr>
                   ) : (
                     leads.map((row) => (
-                      <tr key={row.id} className="group text-[var(--text-soft)] hover:bg-[var(--row-bg-hover)] transition-colors">
+                      <tr key={row.id} className="group relative text-[var(--text-soft)] hover:bg-[var(--row-bg-hover)] transition-colors">
                         <td className="px-4 py-3 whitespace-nowrap text-[var(--text-dim)] tabular-nums text-xs">
                           {formatDate(row.updatedAt)}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap font-medium text-[var(--foreground)] max-w-[160px] truncate">
-                          <Link href={`/leads/${row.id}`} className="text-sf-teal group-hover:underline">
+                          <Link href={`/leads/${row.id}`} className="before:absolute before:inset-0 text-sf-teal group-hover:underline">
                             {row.name ?? "—"}
                           </Link>
                         </td>
@@ -280,11 +279,6 @@ export default async function LeadProfilesPage({ searchParams }: { searchParams:
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap text-xs capitalize text-[var(--text-dim)]">
                           {row.channel}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-right">
-                          <Link href={`/leads/${row.id}`} className="text-xs text-[var(--text-muted)] hover:text-sf-teal transition-colors">
-                            View →
-                          </Link>
                         </td>
                       </tr>
                     ))

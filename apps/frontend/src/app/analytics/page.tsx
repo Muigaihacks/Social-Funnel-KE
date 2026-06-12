@@ -44,6 +44,12 @@ function WowTable({
           {keys.map((k) => {
             const a = current[k];
             const b = previous?.[k];
+            
+            // Skip if value is an object (like scoreDistribution)
+            if (typeof a === 'object' && a !== null && !Array.isArray(a)) {
+              return null;
+            }
+            
             const na = typeof a === "number" ? a : Number(a);
             const nb = typeof b === "number" ? b : Number(b);
             const bothNum = Number.isFinite(na) && Number.isFinite(nb);
@@ -58,7 +64,7 @@ function WowTable({
                 </td>
               </tr>
             );
-          })}
+          }).filter(Boolean)}
         </tbody>
       </table>
     </div>
@@ -71,7 +77,7 @@ export default async function AnalyticsPage({
   searchParams: Promise<{ days?: string; weekStart?: string }>;
 }) {
   const sp = await searchParams;
-  const days = Math.min(Math.max(Number(sp.days ?? 30), 7), 365);
+  const days = Math.min(Math.max(Number(sp.days ?? 90), 7), 365);
 
   let attribution: AttributionPayload | null = null;
   let attError: string | null = null;
@@ -107,14 +113,6 @@ export default async function AnalyticsPage({
     <main className="min-h-screen px-4 pb-20 md:px-8">
       <div className="mx-auto max-w-6xl">
         <header className="mb-10 border-b border-[var(--card-border)] pb-6">
-          <div className="flex items-center gap-3 mb-2">
-            <span className="flex h-6 w-6 items-center justify-center rounded bg-gradient-to-br from-[var(--sf-teal)] to-emerald-600 text-xs shadow-inner">
-              🧠
-            </span>
-            <span className="text-xs font-bold uppercase tracking-widest text-[var(--sf-teal)]">
-              Acquisition OS Business Intelligence Hub
-            </span>
-          </div>
           <h1 className="text-2xl font-semibold tracking-tight text-[var(--foreground)] md:text-3xl">Analytics</h1>
           <p className="mt-1 text-sm text-[var(--text-muted)]">
             Rolling attribution charts feed the same underlying facts as the weekly digest (S10 snapshots).

@@ -112,7 +112,7 @@ export default async function OverviewPage() {
               Snapshot from the API rolling window (last 7 days for new leads & follow-ups).
             </p>
           </div>
-          <p className="text-xs font-medium uppercase tracking-wider text-sf-teal">
+          <p className="text-xs font-medium uppercase tracking-wider text-[var(--sf-teal)]">
             {new Intl.DateTimeFormat("en-KE", {
               weekday: "short",
               day: "numeric",
@@ -124,15 +124,15 @@ export default async function OverviewPage() {
 
         {error ? (
           <div
-            className="rounded-2xl border border-semantic-warning/40 bg-semantic-warning/10 px-4 py-4 text-sm text-[var(--foreground)]"
+            className="rounded-2xl border border-semantic-warning/40 bg-semantic-warning/10 px-4 py-4 text-sm"
             role="alert"
           >
             <p className="font-medium text-semantic-warning">Backend unreachable or misconfigured</p>
             <p className="mt-2 text-[var(--text-muted)]">
-              {error}. Set <code className="rounded bg-[var(--card-surface)] border border-[var(--card-border)] px-1">NEXT_PUBLIC_API_URL</code> or{" "}
-              <code className="rounded bg-[var(--card-surface)] border border-[var(--card-border)] px-1">BACKEND_URL</code> in{" "}
-              <code className="rounded bg-[var(--card-surface)] border border-[var(--card-border)] px-1">apps/frontend/.env.local</code> if the API is not on{" "}
-              <code className="rounded bg-[var(--card-surface)] border border-[var(--card-border)] px-1">http://127.0.0.1:4000</code>.
+              {error}. Set <code className="rounded bg-[var(--card-surface)] px-1 border border-[var(--card-border)]">NEXT_PUBLIC_API_URL</code> or{" "}
+              <code className="rounded bg-[var(--card-surface)] px-1 border border-[var(--card-border)]">BACKEND_URL</code> in{" "}
+              <code className="rounded bg-[var(--card-surface)] px-1 border border-[var(--card-border)]">apps/frontend/.env.local</code> if the API is not on{" "}
+              <code className="rounded bg-[var(--card-surface)] px-1 border border-[var(--card-border)]">http://127.0.0.1:4000</code>.
             </p>
           </div>
         ) : (
@@ -166,7 +166,7 @@ export default async function OverviewPage() {
                     <StatCard
                       label="No-shows (7d)"
                       value={stats.noShowsThisWeek}
-                      sub={<code className="text-[10px] text-[var(--text-faint)]">activity: no_show</code>}
+                      sub={<code className="text-[10px] text-[var(--text-muted)]">activity: no_show</code>}
                     />
                     <WorkflowHealthCard workflow={stats.workflowHealth} />
                   </div>
@@ -180,16 +180,16 @@ export default async function OverviewPage() {
                   Latest workflow pings
                 </h2>
                 <p className="mb-3 text-xs text-[var(--text-muted)]">
-                  Rows from <code className="rounded bg-[var(--card-surface)] border border-[var(--card-border)] px-1">workflow_heartbeats</code>. One HTTP POST per
+                  Rows from <code className="rounded bg-[var(--card-surface)] px-1 border border-[var(--card-border)]">workflow_heartbeats</code>. One HTTP POST per
                   successful (or error) run you wire in n8n — not on a fixed clock. For failures, configure n8n Error
-                  Workflow notifications; optionally POST <code className="rounded bg-[var(--card-surface)] border border-[var(--card-border)] px-1">status: error</code>{" "}
+                  Workflow notifications; optionally POST <code className="rounded bg-[var(--card-surface)] px-1 border border-[var(--card-border)]">status: error</code>{" "}
                   here.
                 </p>
-                <ul className="space-y-2 rounded-2xl border border-[var(--card-border)] bg-[var(--card-surface)] p-3 md:p-4">
+                <ul className="max-h-80 space-y-2 overflow-y-auto rounded-2xl border border-[var(--card-border)] bg-[var(--card-surface)] p-3 scrollbar-thin md:p-4">
                   {heartbeats.map((h) => (
                     <li
                       key={h.id}
-                      className="flex flex-wrap items-center gap-2 border-b border-[var(--card-border)] py-2 last:border-0 last:pb-0"
+                      className="flex flex-wrap items-center gap-2 border-b border-[var(--chart-grid)] py-2 last:border-0 last:pb-0"
                     >
                       <span
                         className={`h-2 w-2 shrink-0 rounded-full ${
@@ -197,7 +197,7 @@ export default async function OverviewPage() {
                         }`}
                         title={h.status}
                       />
-                      <span className="font-mono text-xs text-sf-teal">{h.workflowKey}</span>
+                      <span className="font-mono text-xs text-[var(--sf-teal)]">{h.workflowKey}</span>
                       <span className="text-xs text-[var(--text-muted)]">
                         {new Intl.DateTimeFormat("en-KE", {
                           dateStyle: "short",
@@ -205,7 +205,7 @@ export default async function OverviewPage() {
                         }).format(new Date(h.createdAt))}
                       </span>
                       {h.message ? (
-                        <span className="w-full text-xs text-[var(--text-dim)] md:ml-6 md:w-auto">{h.message}</span>
+                        <span className="w-full text-xs text-[var(--text-muted)] md:ml-6 md:w-auto">{h.message}</span>
                       ) : null}
                     </li>
                   ))}
@@ -221,31 +221,31 @@ export default async function OverviewPage() {
                 <div className="space-y-3 rounded-2xl border border-[var(--card-border)] bg-[var(--card-surface)] p-4 md:p-6">
                   {byStageEntries.map(([stage, count], i) => (
                     <div key={stage} className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-4">
-                      <span className="w-full min-w-[8rem] text-sm capitalize text-[var(--foreground)] sm:w-40">
+                      <span className="w-full min-w-[8rem] text-sm font-medium capitalize text-[var(--foreground)] sm:w-40">
                         {stage.replace(/_/g, " ")}
                       </span>
                       <div className="flex flex-1 items-center gap-3">
-                        <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-[var(--card-border)]">
+                        <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-[var(--chart-grid)]">
                           <div
                             className={`h-full rounded-full transition-all ${BAR_CLASS[i % 8] ?? "bg-sf-teal"}`}
                             style={{ width: `${Math.max(8, (count / maxStage) * 100)}%` }}
                           />
                         </div>
-                        <span className="tabular-nums text-sm font-medium text-[var(--foreground)]">{count}</span>
+                        <span className="tabular-nums text-sm font-semibold text-[var(--foreground)]">{count}</span>
                       </div>
                     </div>
                   ))}
                 </div>
                 <p className="mt-3 text-xs text-[var(--text-muted)]">
-                  Bars group leads by <code className="rounded bg-[var(--card-surface)] border border-[var(--card-border)] px-1">pipeline_stage</code> using the exact
+                  Bars group leads by <code className="rounded bg-[var(--card-surface)] px-1 border border-[var(--card-border)]">pipeline_stage</code> using the exact
                   string stored in the DB. Match those labels in n8n so one real stage doesn’t appear as two bars.
                 </p>
               </section>
             )}
 
-            <p className="text-center text-sm text-[var(--text-dim)]">
+            <p className="text-center text-sm text-[var(--text-muted)]">
               Live lead stream, animations, and full lead profiles live under{" "}
-              <span className="text-sf-teal">Live Feed</span> and <span className="text-sf-teal">Lead Profiles</span>.
+              <span className="text-[var(--sf-teal)]">Live Feed</span> and <span className="text-[var(--sf-teal)]">Lead Profiles</span>.
             </p>
           </>
         )}
@@ -268,14 +268,14 @@ function StatCard({
   sub?: ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-surface)] px-4 py-4 shadow-sm">
-      <p className="text-xs text-[var(--text-muted)]">{label}</p>
+    <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-surface)] px-4 py-4 shadow-inner backdrop-blur-sm">
+      <p className="text-xs text-[var(--text-dim)]">{label}</p>
       <p
         className={`mt-1 font-semibold tabular-nums text-[var(--foreground)] ${small ? "text-lg" : "text-2xl"} ${accent ?? ""}`}
       >
         {value}
       </p>
-      {sub ? <p className="mt-2 text-xs leading-snug text-[var(--text-dim)]">{sub}</p> : null}
+      {sub ? <p className="mt-2 text-xs leading-snug text-[var(--text-muted)]">{sub}</p> : null}
     </div>
   );
 }
@@ -289,13 +289,13 @@ function WorkflowHealthCard({
   const hasPing = w.lastPingAt != null;
   const healthy = w.errors24h === 0;
   return (
-    <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-surface)] px-4 py-4 shadow-sm">
+    <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-surface)] px-4 py-4 shadow-inner backdrop-blur-sm">
       <div className="flex items-center gap-2">
         <span
-          className={`h-2 w-2 shrink-0 rounded-full ${hasPing ? (healthy ? "bg-semantic-success" : "bg-semantic-warning") : "bg-[var(--card-border)]"}`}
+          className={`h-2 w-2 shrink-0 rounded-full ${hasPing ? (healthy ? "bg-semantic-success" : "bg-semantic-warning") : "bg-[var(--text-faint)]"}`}
           title={hasPing ? (healthy ? "No errors in 24h" : "Errors in last 24h") : "No pings yet"}
         />
-        <p className="text-xs text-[var(--text-muted)]">Workflow health</p>
+        <p className="text-xs text-[var(--text-dim)]">Workflow health</p>
       </div>
       <p className="mt-1 text-lg font-semibold tabular-nums text-[var(--foreground)]">
         {hasPing
@@ -303,14 +303,14 @@ function WorkflowHealthCard({
           : "No heartbeats yet"}
       </p>
       {hasPing ? (
-        <p className="mt-2 font-mono text-[11px] leading-relaxed text-[var(--text-dim)]">
+        <p className="mt-2 font-mono text-[11px] leading-relaxed text-[var(--text-muted)]">
           Last: {w.lastWorkflowKey ?? "—"} ({w.lastStatus ?? "—"}) ·{" "}
           {new Intl.DateTimeFormat("en-KE", { dateStyle: "short", timeStyle: "short" }).format(
             new Date(w.lastPingAt!)
           )}
         </p>
       ) : (
-        <p className="mt-2 text-xs text-[var(--text-dim)]">POST success/error pings from n8n to populate this card.</p>
+        <p className="mt-2 text-xs text-[var(--text-muted)]">POST success/error pings from n8n to populate this card.</p>
       )}
     </div>
   );

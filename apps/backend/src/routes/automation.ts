@@ -135,6 +135,60 @@ router.post("/leads/:leadId/terminate", async (req, res) => {
   }
 });
 
+const ReactivateLeadSchema = z.object({
+  note: z.string().max(2000).optional(),
+  reactivationAttempt: z.number().int().min(1).max(3).optional(),
+});
+
+/**
+ * Mark lead as reactivated (S7 dormant reactivation workflow).
+ * Updates pipeline stage to "reactivated" and logs activity.
+ */
+router.post("/leads/:leadId/mark-reactivated", async (req, res) => {
+  try {
+    const { leadId } = req.params;
+    const body = ReactivateLeadSchema.parse(req.body ?? {});
+    const tenantId = getTenantId(req.headers as Record<string, unknown>);
+
+    const lead = await findLeadVisibleToTenant(leadId, tenantId);
+    if (!lead) return res.status(404).json({ ok: false, error: "Lead not found" });
+
+    if (lead.pipelineStage === "reactivated") {
+      return res.json({ ok: true, leadId: lead.id, pipelineStage: "reactivated", already: true });
+    }
+
+    const fromStage = lead.pipelineStage;
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: {
+        pipelineStage: "reactivated",
+        lastContactDate: new Date(),
+      },
+    });
+
+    await prisma.stageTransition.create({
+      data: { leadId: lead.id, fromStage, toStage: "reactivated" },
+    });
+
+    await prisma.activityLog.create({
+      data: {
+        leadId: lead.id,
+        action: "reactivated",
+        payload: {
+          fromStage,
+          note: body.note ?? null,
+          reactivationAttempt: body.reactivationAttempt ?? null,
+          source: "s7_dormant_reactivation",
+        },
+      },
+    });
+
+    return res.json({ ok: true, leadId: lead.id, pipelineStage: "reactivated" });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
 const DashboardNoteSchema = z.object({
   text: z.string().min(1).max(8000),
 });
@@ -746,6 +800,62 @@ router.get("/follow-up-queue", async (req, res) => {
   }
 });
 
+/** Mark a follow-up as skipped (sent immediately without actual sending) */
+router.post("/follow-up/:id/skip", async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const followUp = await prisma.followUpQueue.findUnique({
+      where: { id },
+    });
+
+    if (!followUp) {
+      return res.status(404).json({ ok: false, error: "Follow-up not found" });
+    }
+
+    await prisma.followUpQueue.update({
+      where: { id },
+      data: {
+        status: "skipped",
+        sentAt: new Date(),
+      },
+    });
+
+    return res.json({ ok: true, followUpId: id, status: "skipped" });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+/** Bump a follow-up by specified hours (default 24) */
+router.post("/follow-up/:id/bump", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const hours = Number(req.body?.hours ?? 24);
+    
+    const followUp = await prisma.followUpQueue.findUnique({
+      where: { id },
+    });
+
+    if (!followUp) {
+      return res.status(404).json({ ok: false, error: "Follow-up not found" });
+    }
+
+    const newScheduledFor = new Date(followUp.scheduledFor.getTime() + hours * 60 * 60 * 1000);
+
+    await prisma.followUpQueue.update({
+      where: { id },
+      data: {
+        scheduledFor: newScheduledFor,
+      },
+    });
+
+    return res.json({ ok: true, followUpId: id, newScheduledFor: newScheduledFor.toISOString() });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
 /** Cal.com / booking webhook outcomes for the dashboard (activity feed). */
 router.get("/booking-events", async (req, res) => {
   try {
@@ -1246,7 +1356,11 @@ router.get("/funnel-live", async (req, res) => {
     const now = new Date();
     const whereBase = tenantId ? { tenantId } : {};
 
-    const [byStage, newLeadsInPeriod] = await Promise.all([
+    // Define all pipeline stages we want to show (in order)
+    const allStages = ["new", "contacted", "nurture", "booked", "audit_booked", "no_show", "closed", "dead", "reactivated"];
+
+    // Get actual stage counts, new leads, and metrics in parallel
+    const [byStage, newLeadsInPeriod, funnelMetrics] = await Promise.all([
       prisma.lead.groupBy({
         by: ["pipelineStage"],
         where: whereBase,
@@ -1255,19 +1369,75 @@ router.get("/funnel-live", async (req, res) => {
       prisma.lead.count({
         where: { ...whereBase, createdAt: { gte: from } },
       }),
+      calculateFunnelMetrics(tenantId ?? null, days),
     ]);
 
-    const stages = byStage
-      .map((s: (typeof byStage)[number]) => ({
-        stage: s.pipelineStage,
-        count: s._count,
-      }))
-      .sort((a, b) => b.count - a.count);
+    // Create a map of existing counts
+    const stageCounts = new Map(
+      byStage.map((s: { pipelineStage: string; _count: number }) => [s.pipelineStage, s._count])
+    );
+
+    // Return all stages with their counts (0 for missing stages)
+    const stages = allStages.map((stage) => ({
+      stage,
+      count: stageCounts.get(stage) ?? 0,
+    }));
+
+    // Generate anomalies based on metrics
+    const anomalies: Array<{ id: string; severity: "warning" | "critical"; message: string }> = [];
+
+    // Low daily lead volume (configurable threshold - default 5)
+    const avgLeadsPerDay = funnelMetrics.avgLeadsPerDay;
+    if (avgLeadsPerDay < 5) {
+      anomalies.push({
+        id: "low-lead-volume",
+        severity: "warning",
+        message: `Average lead volume (${avgLeadsPerDay.toFixed(1)}/day) below threshold of 5/day`,
+      });
+    }
+
+    // High no-show rate
+    if (funnelMetrics.noShowRate > 30) {
+      anomalies.push({
+        id: "high-no-show-rate",
+        severity: "critical",
+        message: `No-show rate at ${funnelMetrics.noShowRate.toFixed(1)}% (${funnelMetrics.noShowCount}/${funnelMetrics.totalBooked})`,
+      });
+    } else if (funnelMetrics.noShowRate > 20) {
+      anomalies.push({
+        id: "elevated-no-show-rate",
+        severity: "warning",
+        message: `No-show rate elevated at ${funnelMetrics.noShowRate.toFixed(1)}% (${funnelMetrics.noShowCount}/${funnelMetrics.totalBooked})`,
+      });
+    }
+
+    // Low nurture conversion
+    if (funnelMetrics.nurtureConversionRate < 15 && funnelMetrics.nurturedLeads > 10) {
+      anomalies.push({
+        id: "low-nurture-conversion",
+        severity: "warning",
+        message: `Only ${funnelMetrics.nurtureConversionRate.toFixed(1)}% of nurtured leads converted to booking`,
+      });
+    }
+
+    // High score downgrades
+    const downgrades = funnelMetrics.scoreMovements.hotToCold + 
+                      funnelMetrics.scoreMovements.hotToWarm + 
+                      funnelMetrics.scoreMovements.warmToCold;
+    const upgrades = funnelMetrics.scoreMovements.coldToWarm + 
+                    funnelMetrics.scoreMovements.coldToHot + 
+                    funnelMetrics.scoreMovements.warmToHot;
+    
+    if (downgrades > upgrades && funnelMetrics.totalScoreChanges > 10) {
+      anomalies.push({
+        id: "high-score-downgrades",
+        severity: "warning",
+        message: `${downgrades} score downgrades vs ${upgrades} upgrades in period`,
+      });
+    }
 
     return res.json({
       ok: true,
-      draft: true,
-      note: "Snapshot by pipeline_stage. Official buckets, branches (booked vs nurture), and anomaly rules will be set with product — this shape stays stable for the UI.",
       period: {
         from: from.toISOString(),
         to: now.toISOString(),
@@ -1276,7 +1446,20 @@ router.get("/funnel-live", async (req, res) => {
       },
       newLeadsInPeriod,
       stages,
-      anomalies: [] as Array<{ id: string; severity: "warning" | "critical"; message: string }>,
+      metrics: {
+        nurtureConversionRate: funnelMetrics.nurtureConversionRate,
+        nurturedLeads: funnelMetrics.nurturedLeads,
+        nurturedThenBooked: funnelMetrics.nurturedThenBooked,
+        touchpointBreakdown: funnelMetrics.touchpointBreakdown,
+        touchpointPercentages: funnelMetrics.touchpointPercentages,
+        totalTouchpointBookings: funnelMetrics.totalTouchpointBookings,
+        noShowRate: funnelMetrics.noShowRate,
+        totalBooked: funnelMetrics.totalBooked,
+        noShowCount: funnelMetrics.noShowCount,
+        scoreMovements: funnelMetrics.scoreMovements,
+        avgLeadsPerDay: Math.round(avgLeadsPerDay * 10) / 10,
+      },
+      anomalies,
     });
   } catch (err) {
     return res.status(400).json({ ok: false, error: err instanceof Error ? err.message : "Failed" });
@@ -1296,6 +1479,12 @@ router.get("/pipeline-stats", async (req, res) => {
       ...(tenantId ? { lead: { tenantId } } : {}),
     };
 
+    const reactivatedActivityWhere = {
+      createdAt: { gte: weekAgo },
+      action: { equals: "reactivated", mode: "insensitive" as const },
+      ...(tenantId ? { lead: { tenantId } } : {}),
+    };
+
     const [
       totalLeads,
       newThisWeek,
@@ -1306,6 +1495,7 @@ router.get("/pipeline-stats", async (req, res) => {
       coldLeads,
       scoreAgg,
       noShowsThisWeek,
+      reactivatedThisWeek,
       hbPings24h,
       hbErrors24h,
       latestHb,
@@ -1322,6 +1512,7 @@ router.get("/pipeline-stats", async (req, res) => {
         _avg: { leadScore: true },
       }),
       prisma.activityLog.count({ where: activityWhere }),
+      prisma.activityLog.count({ where: reactivatedActivityWhere }),
       prisma.workflowHeartbeat.count({ where: { createdAt: { gte: dayAgo } } }),
       prisma.workflowHeartbeat.count({ where: { createdAt: { gte: dayAgo }, status: "error" } }),
       prisma.workflowHeartbeat.findFirst({ orderBy: { createdAt: "desc" } }),
@@ -1341,6 +1532,7 @@ router.get("/pipeline-stats", async (req, res) => {
         byStage: Object.fromEntries(byStage.map((s: (typeof byStage)[number]) => [s.pipelineStage, s._count])),
         averageLeadScore,
         noShowsThisWeek,
+        reactivatedThisWeek,
         workflowHealth: {
           lastPingAt: latestHb?.createdAt.toISOString() ?? null,
           lastWorkflowKey: latestHb?.workflowKey ?? null,
@@ -1396,7 +1588,7 @@ router.get("/analytics/attribution", async (req, res) => {
       prisma.$queryRaw<Array<{ channel: string; new_leads: bigint; booked_like: bigint }>>`
         SELECT l."channel" AS channel,
           COUNT(*)::bigint AS new_leads,
-          SUM(CASE WHEN l."pipeline_stage" IN ('booked', 'closed') THEN 1 ELSE 0 END)::bigint AS booked_like
+          SUM(CASE WHEN l."pipeline_stage" IN ('audit_booked', 'client') THEN 1 ELSE 0 END)::bigint AS booked_like
         FROM "Lead" l
         WHERE l."createdAt" >= ${from} AND l."createdAt" <= ${to}
         ${tenantSql}
@@ -1525,13 +1717,174 @@ const HeartbeatSchema = z.object({
   message: z.string().optional(),
 });
 
+/**
+ * Calculate advanced funnel metrics for anomaly detection
+ */
+async function calculateFunnelMetrics(tenantId: string | null, days: number) {
+  const now = new Date();
+  const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const tenantWhere = tenantId ? { tenantId } : {};
+
+  // 1. % of leads booked after going through nurture
+  // Count leads that went through nurture stage (via activity log)
+  const leadsWhoWentThroughNurture = await prisma.activityLog.findMany({
+    where: {
+      createdAt: { gte: from, lte: now },
+      action: "stage_change",
+      ...(tenantId ? { lead: { tenantId } } : {}),
+    },
+    select: {
+      leadId: true,
+      payload: true,
+      lead: {
+        select: {
+          pipelineStage: true,
+        },
+      },
+    },
+  });
+
+  // Filter to only those where toStage was "nurture"
+  const nurturedLeadIds = new Set(
+    leadsWhoWentThroughNurture
+      .filter((log) => {
+        const payload = log.payload as any;
+        return payload?.toStage === "nurture";
+      })
+      .map((log) => log.leadId)
+  );
+
+  const nurturedLeads = nurturedLeadIds.size;
+
+  // Count how many of those are now booked
+  const nurturedThenBooked = leadsWhoWentThroughNurture
+    .filter((log) => {
+      const payload = log.payload as any;
+      const isNurtureStage = payload?.toStage === "nurture";
+      const isBooked = ["booked", "audit_booked", "client", "closed"].includes(log.lead.pipelineStage);
+      return isNurtureStage && isBooked;
+    })
+    .length;
+
+  // Touchpoint analysis: At which touch did the booking happen?
+  const touchpointBookings = await prisma.$queryRaw<
+    Array<{ touchIndex: number; count: bigint }>
+  >`
+    SELECT 
+      COALESCE((al."payload"->>'touchIndex')::int, 0) AS "touchIndex",
+      COUNT(*)::bigint AS count
+    FROM "ActivityLog" al
+    JOIN "Lead" l ON l."id" = al."lead_id"
+    WHERE al."action" = 'booked_after_nurture'
+      AND al."created_at" >= ${from}
+      AND al."created_at" <= ${now}
+      ${tenantId ? Prisma.sql`AND l."tenant_id" = ${tenantId}` : Prisma.empty}
+    GROUP BY "touchIndex"
+    ORDER BY "touchIndex" ASC
+  `;
+
+  const touchpointBreakdown: Record<string, number> = {};
+  let totalTouchpointBookings = 0;
+  
+  for (const tp of touchpointBookings) {
+    const touchNum = Number(tp.touchIndex);
+    const count = Number(tp.count);
+    touchpointBreakdown[`touch${touchNum}`] = count;
+    totalTouchpointBookings += count;
+  }
+
+  // Calculate percentages
+  const touchpointPercentages: Record<string, number> = {};
+  for (const [key, count] of Object.entries(touchpointBreakdown)) {
+    touchpointPercentages[key] = totalTouchpointBookings > 0 
+      ? (count / totalTouchpointBookings) * 100 
+      : 0;
+  }
+
+  // 2. % of bookings that resulted in no-show
+  const [totalBooked, noShowCount] = await Promise.all([
+    prisma.lead.count({
+      where: {
+        ...tenantWhere,
+        createdAt: { gte: from, lte: now },
+        pipelineStage: { in: ["booked", "audit_booked", "no_show", "client", "closed"] },
+      },
+    }),
+    prisma.lead.count({
+      where: {
+        ...tenantWhere,
+        createdAt: { gte: from, lte: now },
+        pipelineStage: "no_show",
+      },
+    }),
+  ]);
+
+  // 3. Score category movements
+  const scoreChanges = await prisma.$queryRaw<
+    Array<{ leadId: string; oldScore: number | null; newScore: number | null; changedAt: Date }>
+  >`
+    SELECT 
+      al."lead_id" AS "leadId",
+      (al."payload"->>'oldScore')::int AS "oldScore",
+      (al."payload"->>'newScore')::int AS "newScore",
+      al."created_at" AS "changedAt"
+    FROM "ActivityLog" al
+    JOIN "Lead" l ON l."id" = al."lead_id"
+    WHERE al."action" = 'score_change'
+      AND al."created_at" >= ${from}
+      AND al."created_at" <= ${now}
+      ${tenantId ? Prisma.sql`AND l."tenant_id" = ${tenantId}` : Prisma.empty}
+    ORDER BY al."created_at" DESC
+  `;
+
+  const scoreMovements = {
+    coldToWarm: 0,
+    coldToHot: 0,
+    warmToHot: 0,
+    warmToCold: 0,
+    hotToCold: 0,
+    hotToWarm: 0,
+  };
+
+  for (const change of scoreChanges) {
+    const old = change.oldScore;
+    const newScore = change.newScore;
+    if (old === null || newScore === null) continue;
+
+    const oldCategory = old >= 7 ? "hot" : old >= 4 ? "warm" : "cold";
+    const newCategory = newScore >= 7 ? "hot" : newScore >= 4 ? "warm" : "cold";
+
+    if (oldCategory === "cold" && newCategory === "warm") scoreMovements.coldToWarm++;
+    if (oldCategory === "cold" && newCategory === "hot") scoreMovements.coldToHot++;
+    if (oldCategory === "warm" && newCategory === "hot") scoreMovements.warmToHot++;
+    if (oldCategory === "warm" && newCategory === "cold") scoreMovements.warmToCold++;
+    if (oldCategory === "hot" && newCategory === "cold") scoreMovements.hotToCold++;
+    if (oldCategory === "hot" && newCategory === "warm") scoreMovements.hotToWarm++;
+  }
+
+  return {
+    nurtureConversionRate: nurturedLeads > 0 ? (nurturedThenBooked / nurturedLeads) * 100 : 0,
+    nurturedLeads,
+    nurturedThenBooked,
+    touchpointBreakdown,
+    touchpointPercentages,
+    totalTouchpointBookings,
+    noShowRate: totalBooked > 0 ? (noShowCount / totalBooked) * 100 : 0,
+    totalBooked,
+    noShowCount,
+    scoreMovements,
+    totalScoreChanges: scoreChanges.length,
+  };
+}
+
 /** Latest pings for Command Centre / technician visibility (read-only). */
 router.get("/workflow-heartbeats", async (req, res) => {
   try {
     const limit = Math.min(Math.max(Number(req.query.limit ?? 10), 1), 50);
-    const items = await prisma.workflowHeartbeat.findMany({
+    
+    const allItems = await prisma.workflowHeartbeat.findMany({
       orderBy: { createdAt: "desc" },
-      take: limit,
+      take: limit * 3, // Fetch more to account for deduplication
       select: {
         id: true,
         workflowKey: true,
@@ -1540,7 +1893,51 @@ router.get("/workflow-heartbeats", async (req, res) => {
         createdAt: true,
       },
     });
-    return res.json({ ok: true, items });
+
+    // Deduplicate consecutive pings ONLY from S4B (cron-based workflow)
+    const deduped: (typeof allItems) = [];
+    let lastWorkflowKey: string | null = null;
+    let lastStatus: string | null = null;
+    let lastMessage: string | null = null;
+    let count = 1;
+
+    for (const item of allItems) {
+      // Only deduplicate S4B workflow (cron task for processing due leads)
+      const shouldDedupe = item.workflowKey.toLowerCase().includes('s4b');
+      
+      if (
+        shouldDedupe &&
+        item.workflowKey === lastWorkflowKey &&
+        item.status === lastStatus &&
+        item.message === lastMessage
+      ) {
+        count++;
+        // Skip consecutive duplicates, but keep track of count
+        continue;
+      }
+
+      // If we skipped any, add count indicator to the previous item
+      if (count > 1 && deduped.length > 0 && shouldDedupe) {
+        deduped[deduped.length - 1].message = 
+          `${deduped[deduped.length - 1].message || ""}${deduped[deduped.length - 1].message ? " " : ""}(×${count})`;
+      }
+
+      deduped.push(item);
+      lastWorkflowKey = item.workflowKey;
+      lastStatus = item.status;
+      lastMessage = item.message;
+      count = 1;
+
+      if (deduped.length >= limit) break;
+    }
+
+    // Add count to last item if needed
+    if (count > 1 && deduped.length > 0 && lastWorkflowKey?.toLowerCase().includes('s4b')) {
+      deduped[deduped.length - 1].message = 
+        `${deduped[deduped.length - 1].message || ""}${deduped[deduped.length - 1].message ? " " : ""}(×${count})`;
+    }
+
+    return res.json({ ok: true, items: deduped.slice(0, limit) });
   } catch (err) {
     return res.status(400).json({ ok: false, error: err instanceof Error ? err.message : "Failed" });
   }

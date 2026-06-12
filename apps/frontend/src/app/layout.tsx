@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { ConditionalSiteHeader } from "@/components/ConditionalSiteHeader";
+import { SiteHeader } from "@/components/SiteHeader";
 import { ThemeProvider } from "@/components/ThemeProvider";
 
 export const metadata: Metadata = {
@@ -20,7 +20,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className="min-h-screen antialiased font-sans">
         <ThemeProvider>
-          <ConditionalSiteHeader />
+          <SiteHeader />
           <div className="pt-[7.25rem] md:pt-[5.5rem]">{children}</div>
         </ThemeProvider>
       </body>
