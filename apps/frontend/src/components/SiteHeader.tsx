@@ -8,7 +8,7 @@ import { SignOutButton } from "@/components/SignOutButton";
 
 const MAIN_NAV = [
   { href: "/", label: "Overview" },
-  { href: "/admin", label: "Admin" },
+  { href: "/administration", label: "Admin" },
   { href: "/live-feed", label: "Live funnel" },
   { href: "/leads", label: "Lead Profiles" },
   { href: "/bookings", label: "Bookings" },

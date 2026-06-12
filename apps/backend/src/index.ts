@@ -20,7 +20,7 @@ const allowedOrigins = [
   process.env.FRONTEND_URL,
   "http://localhost:3000",
   "http://127.0.0.1:3000",
-  "https://social-funnel-ke-dashboard.vercel.app", // Explicit Vercel domain
+  "https://social-funnel-ke-dashboard.vercel.app", // Production Vercel
 ].filter(Boolean);
 
 app.use(cors({
@@ -33,18 +33,20 @@ app.use(cors({
       return callback(null, true);
     }
     
-    // Allow any Vercel preview deployments
-    if (origin.endsWith('.vercel.app')) {
+    // Allow ALL Vercel deployments (including previews)
+    if (origin.includes('.vercel.app')) {
+      console.log('✅ CORS allowed for Vercel:', origin);
       return callback(null, true);
     }
     
     // Allow ngrok URLs
     if (origin.includes('ngrok-free.dev') || origin.includes('ngrok.io')) {
+      console.log('✅ CORS allowed for ngrok:', origin);
       return callback(null, true);
     }
     
     // Log rejected origins for debugging
-    console.log('CORS blocked origin:', origin);
+    console.log('❌ CORS blocked origin:', origin);
     callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
