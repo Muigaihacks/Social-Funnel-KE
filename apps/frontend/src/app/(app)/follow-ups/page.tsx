@@ -114,7 +114,10 @@ export default function FollowUpsPage() {
     try {
       const res = await fetch(`${apiBase()}/api/v1/automation/follow-up/${followUpId}/skip`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          'ngrok-skip-browser-warning': '1'
+        },
       });
       
       if (!res.ok) throw new Error("Failed to skip follow-up");
@@ -130,7 +133,10 @@ export default function FollowUpsPage() {
     try {
       const res = await fetch(`${apiBase()}/api/v1/automation/follow-up/${followUpId}/bump`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          'ngrok-skip-browser-warning': '1'
+        },
         body: JSON.stringify({ hours: 24 }), // Bump by 24 hours
       });
       
