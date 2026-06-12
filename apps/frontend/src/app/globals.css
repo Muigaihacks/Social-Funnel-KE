@@ -53,6 +53,7 @@
   --card-surface: rgba(15, 23, 42, 0.6);
   --card-border: rgba(255, 255, 255, 0.1);
   --nav-surface: rgba(13, 27, 42, 0.85);
+  --input-bg: rgba(15, 23, 42, 0.8);
   
   --text-muted: #94a3b8;
   --text-dim: #64748b;
@@ -80,6 +81,7 @@
   --card-surface: #ffffff;
   --card-border: #cbd5e1;
   --nav-surface: rgba(255, 255, 255, 0.85);
+  --input-bg: #f1f5f9;
 
   --text-muted: #64748b;
   --text-dim: #94a3b8;
@@ -169,11 +171,25 @@ body {
   animation: feed-pulse-dot 2.4s ease-in-out infinite;
 }
 
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-shimmer {
+  animation: shimmer 1.5s infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .feed-card--celebrate,
   .feed-score-badge,
   .feed-stage-node--warn,
-  .feed-pulse-dot {
+  .feed-pulse-dot,
+  .animate-shimmer {
     animation: none;
   }
   .feed-rail-fill {
