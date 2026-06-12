@@ -19,10 +19,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="min-h-screen antialiased font-sans">
-        <ThemeProvider>
-          <SiteHeader />
-          <div className="pt-[7.25rem] md:pt-[5.5rem]">{children}</div>
-        </ThemeProvider>
+        <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>
   );
